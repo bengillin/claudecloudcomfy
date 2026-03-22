@@ -1,6 +1,6 @@
 # claudecloudcomfy
 
-A command-line toolkit for the [Comfy Cloud API](https://docs.comfy.org/development/cloud/overview). Run ComfyUI workflows on cloud infrastructure from your terminal — 20 built-in presets across video, image, and editing pipelines.
+A command-line toolkit for the [Comfy Cloud API](https://docs.comfy.org/development/cloud/overview). Run ComfyUI workflows on cloud infrastructure from your terminal — 7 tested presets built from official ComfyUI Cloud workflows.
 
 ## Setup
 
@@ -20,17 +20,14 @@ A command-line toolkit for the [Comfy Cloud API](https://docs.comfy.org/developm
 ## Quick start
 
 ```bash
-# Generate a video from text (~80 seconds)
-./comfy.sh gen --preset=wan-fast --prompt "a wolf running through deep snow in a forest"
+# Generate an image instantly
+./comfy.sh gen --preset=z-turbo --prompt "cyberpunk portrait, neon lighting" --open
 
 # Animate a photo into video
-./comfy.sh animate photo.jpg --preset=wan22-i2v --prompt "the scene comes to life"
-
-# Generate an image instantly (8 steps)
-./comfy.sh gen --preset=z-turbo --prompt "cyberpunk portrait, neon lighting"
+./comfy.sh animate photo.jpg --preset=wan22-i2v --prompt "the scene comes to life" --open
 
 # Edit an image with instructions
-./comfy.sh animate photo.jpg --preset=qwen-edit --prompt "Replace the background with a beach sunset"
+./comfy.sh animate photo.jpg --preset=qwen-edit --prompt "Replace the background with a beach sunset" --open
 
 # One photo → multi-angle cinematic video sequence
 ./comfy.sh animate portrait.jpg --preset=multi-shot
@@ -38,35 +35,23 @@ A command-line toolkit for the [Comfy Cloud API](https://docs.comfy.org/developm
 
 All outputs auto-download to `./downloads/`. Add `--open` to view immediately.
 
-## Built-in presets (20)
+## Built-in presets
 
-### Text to Video
-
-| Preset | Model | Resolution | Speed | Best for |
-|--------|-------|-----------|-------|----------|
-| `wan-fast` | Wan 2.1 1.3B | 832x480 | Fast | Quick drafts, iteration |
-| `wan-14b` | Wan 2.2 14B | 832x480 | Slow | Best open-source quality |
-| `skyreels` | SkyReels V2 14B | 1280x720 | Slow | 720p cinematic |
-| `cogvideo` | CogVideoX 5B | 720x480 | Medium | Strong motion coherence |
-| `hunyuan` | HunyuanVideo 1.5 | 848x480 | Medium | Smooth motion |
-| `ltx` | LTX Video 2 19B | 768x512 | Fast | Fast high-res |
-| `mochi` | Mochi Preview | 848x480 | Medium | Different aesthetic |
-
-### Image to Video
-
-| Preset | Model | Resolution | Notes |
-|--------|-------|-----------|-------|
-| `wan22-i2v` | Wan 2.2 14B dual-model | 640x640 | Official, 4-step LoRA option |
-| `wan-i2v` | Wan 2.2 14B | 832x480 | Standard I2V |
-| `cogvideo-i2v` | CogVideoX 5B I2V | 720x480 | CogVideo animation |
-| `ltx23-i2v` | LTX 2.3 22B | 1280x720 | Official, dual-pass upscale + audio |
-| `ltx23-flf2v` | LTX 2.3 22B | 1280x720 | First/last frame → video + audio |
+All presets use official, tested ComfyUI Cloud workflows with 100% open models.
 
 ### Image Generation
 
 | Preset | Model | Resolution | Notes |
 |--------|-------|-----------|-------|
 | `z-turbo` | Z-Image Turbo | 1024x1024 | 8 steps, near-instant |
+
+### Image to Video
+
+| Preset | Model | Resolution | Notes |
+|--------|-------|-----------|-------|
+| `wan22-i2v` | Wan 2.2 14B dual-model | 640x640 | Official, 4-step LoRA option |
+| `ltx23-i2v` | LTX 2.3 22B | 1280x720 | Dual-pass upscale + audio |
+| `ltx23-flf2v` | LTX 2.3 22B | 1280x720 | First/last frame → video + audio |
 
 ### Image Editing
 
@@ -75,13 +60,11 @@ All outputs auto-download to `./downloads/`. Add `--open` to view immediately.
 | `qwen-edit` | Qwen Edit 2509 | Instruction-based editing, 4 steps |
 | `multi-angles` | Qwen Edit + angle LoRA | 8 camera angles from 1 photo |
 
-### Multi-Stage Pipelines
+### Multi-Stage Pipeline
 
 | Preset | Pipeline | Notes |
 |--------|----------|-------|
 | `multi-shot` | Qwen angles → Wan 2.2 I2V → RIFE → stitch | One photo → 5-clip cinematic sequence |
-
-All presets use 100% open models on cloud GPU.
 
 ## Usage
 
@@ -89,11 +72,10 @@ All presets use 100% open models on cloud GPU.
 ./comfy.sh <command> [args...]
 ```
 
-### Generate (text to video/image)
+### Generate (text to image)
 
 ```bash
-./comfy.sh gen --preset=wan-fast --prompt "neon Tokyo street at night" --open
-./comfy.sh gen --preset=z-turbo --prompt "oil painting of a mountain" --seed=42
+./comfy.sh gen --preset=z-turbo --prompt "oil painting of a mountain" --seed=42 --open
 ./comfy.sh preset-list
 ```
 
@@ -117,15 +99,16 @@ All presets use 100% open models on cloud GPU.
 ### Batch runs
 
 ```bash
-./comfy.sh batch-seed workflow.json "3" 1 10          # Sweep seeds
-./comfy.sh batch-file workflow.json "6" "text" prompts.txt  # From file
+./comfy.sh batch-seed workflow.json "3" 1 10                              # Sweep seeds
+./comfy.sh batch-file workflow.json "6" "text" prompts.txt                # From file
 ./comfy.sh batch-grid workflow.json seeds.txt prompts.txt "3" "6" "text"  # Grid
 ```
 
 ### Save your own presets
 
 ```bash
-./comfy.sh preset-save mypreset workflow.json \
+# Save any ComfyUI Cloud workflow as a preset
+./comfy.sh preset-save mypreset workflow_api.json \
   --prompt-node=6.text --seed-node=3 --image-node=5 \
   --desc="My custom workflow"
 
@@ -175,7 +158,7 @@ All presets use 100% open models on cloud GPU.
 | File/Dir | Description |
 |----------|-------------|
 | `comfy.sh` | CLI — every API endpoint + gen, animate, batch, presets, monitoring |
-| `workflows/` | 13 ready-to-run workflow JSONs (official + custom) |
+| `workflows/` | 7 official ComfyUI Cloud workflow JSONs |
 | `presets/` | Saved preset configs (created locally via `preset-save`) |
 | `downloads/` | Generated outputs land here |
 | `REFERENCE.md` | Full API endpoint reference |
