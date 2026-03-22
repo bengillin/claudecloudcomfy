@@ -6,7 +6,7 @@
       "base_precision": "bf16",
       "quantization": "disabled",
       "load_device": "main_device",
-      "attention_mode": "sageattn"
+      "attention_mode": "sdpa"
     }
   },
   "2": {
@@ -17,11 +17,15 @@
     }
   },
   "3": {
-    "class_type": "WanVideoTextEncode",
+    "class_type": "WanVideoTextEncodeCached",
     "inputs": {
+      "model_name": "umt5_xxl_fp16.safetensors",
+      "precision": "bf16",
       "positive_prompt": "A golden retriever running through a field of wildflowers, slow motion, cinematic lighting, shallow depth of field",
       "negative_prompt": "blurry, low quality, distorted, watermark, text",
-      "force_offload": true
+      "quantization": "disabled",
+      "use_disk_cache": true,
+      "device": "gpu"
     }
   },
   "4": {

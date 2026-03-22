@@ -48,13 +48,13 @@ pretty() { python3 -m json.tool 2>/dev/null || cat; }
 _build_payload() {
   local wf_file="$1"
   local overrides="${2:-[]}"
-  local extra_data="${3:-{}}"
-  python3 -c "
-import json, sys
+  local extra_data="${3:-\{\}}"
+  _WF_FILE="$wf_file" _OVERRIDES="$overrides" _EXTRA="$extra_data" python3 -c "
+import json, os
 
-wf = json.load(open('$wf_file'))
-overrides = json.loads('''$overrides''')
-extra = json.loads('''$extra_data''')
+wf = json.load(open(os.environ['_WF_FILE']))
+overrides = json.loads(os.environ['_OVERRIDES'])
+extra = json.loads(os.environ['_EXTRA'])
 
 for o in overrides:
     nid, field, val = str(o['node']), o['field'], o['value']
@@ -70,13 +70,11 @@ print(json.dumps(payload))
 
 # Parse --set node.field=value into JSON overrides array
 _parse_sets() {
-  local args=("$@")
-  python3 -c "
+  python3 - "$@" <<'PYEOF'
 import json, sys
 
 overrides = []
 for arg in sys.argv[1:]:
-    # format: node.field=value
     dot = arg.index('.')
     eq = arg.index('=', dot)
     node = arg[:dot]
@@ -88,7 +86,7 @@ for arg in sys.argv[1:]:
         val = raw
     overrides.append({'node': node, 'field': field, 'value': val})
 print(json.dumps(overrides))
-" "${args[@]}"
+PYEOF
 }
 
 # Extract output filenames from a job detail JSON
@@ -487,10 +485,10 @@ cmd_batch_seed() {
   local ids=()
   for ((seed=start; seed<=end; seed++)); do
     local overrides
-    overrides=$(python3 -c "
-import json
-base = json.loads('''$base_overrides''')
-base.append({'node': '$node_id', 'field': 'seed', 'value': $seed})
+    overrides=$(_BASE="$base_overrides" _NID="$node_id" _SEED="$seed" python3 -c "
+import json, os
+base = json.loads(os.environ['_BASE'])
+base.append({'node': os.environ['_NID'], 'field': 'seed', 'value': int(os.environ['_SEED'])})
 print(json.dumps(base))
 ")
     local payload
@@ -547,10 +545,10 @@ cmd_batch_file() {
     [[ -z "$line" || "$line" =~ ^# ]] && continue
     line_num=$((line_num + 1))
     local overrides
-    overrides=$(python3 -c "
-import json
-base = json.loads('''$base_overrides''')
-base.append({'node': '$node_id', 'field': '$field', 'value': '''$line'''})
+    overrides=$(_BASE="$base_overrides" _NID="$node_id" _FIELD="$field" _VAL="$line" python3 -c "
+import json, os
+base = json.loads(os.environ['_BASE'])
+base.append({'node': os.environ['_NID'], 'field': os.environ['_FIELD'], 'value': os.environ['_VAL']})
 print(json.dumps(base))
 ")
     local payload
@@ -585,11 +583,11 @@ cmd_batch_grid() {
       [[ -z "$prompt" || "$prompt" =~ ^# ]] && continue
       count=$((count + 1))
       local overrides
-      overrides=$(python3 -c "
-import json
+      overrides=$(_SNODE="$seed_node" _SEED="$seed" _PNODE="$prompt_node" _PFIELD="$prompt_field" _PROMPT="$prompt" python3 -c "
+import json, os
 print(json.dumps([
-    {'node': '$seed_node', 'field': 'seed', 'value': $seed},
-    {'node': '$prompt_node', 'field': '$prompt_field', 'value': '''$prompt'''}
+    {'node': os.environ['_SNODE'], 'field': 'seed', 'value': int(os.environ['_SEED'])},
+    {'node': os.environ['_PNODE'], 'field': os.environ['_PFIELD'], 'value': os.environ['_PROMPT']}
 ]))
 ")
       local payload
@@ -660,22 +658,28 @@ cmd_preset_save() {
   # Copy workflow into presets dir
   cp "$wf_file" "$PRESETS_DIR/${name}_workflow.json"
 
-  python3 -c "
-import json
+  # Split prompt_node_field into node and field
+  local p_node="" p_field=""
+  if [[ "$prompt_node_field" == *.* ]]; then
+    p_node="${prompt_node_field%%.*}"
+    p_field="${prompt_node_field#*.}"
+  fi
+
+  _WF="${name}_workflow.json" _DESC="$desc" _PN="$p_node" _PF="$p_field" _SN="$seed_node" _OUT="$PRESETS_DIR/$name.json" python3 -c "
+import json, os
 preset = {
-    'workflow': '${name}_workflow.json',
-    'description': '''$desc''',
-    'prompt_node': '${prompt_node_field%%.*}' if '.' in '$prompt_node_field' else '',
-    'prompt_field': '${prompt_node_field#*.}' if '.' in '$prompt_node_field' else '',
-    'seed_node': '$seed_node',
+    'workflow': os.environ['_WF'],
+    'description': os.environ['_DESC'],
+    'prompt_node': os.environ['_PN'],
+    'prompt_field': os.environ['_PF'],
+    'seed_node': os.environ['_SN'],
     'defaults': []
 }
-# Clean empty strings
 preset = {k: v for k, v in preset.items() if v != '' or k == 'defaults'}
-with open('$PRESETS_DIR/$name.json', 'w') as f:
+with open(os.environ['_OUT'], 'w') as f:
     json.dump(preset, f, indent=2)
-print('Preset saved: $name')
 "
+  echo "Preset saved: $name"
 }
 
 cmd_preset_delete() {
@@ -725,15 +729,14 @@ cmd_gen() {
 
   # Load preset and build overrides
   local overrides
-  overrides=$(python3 -c "
-import json, random
+  overrides=$(_PFILE="$pfile" _PROMPT="$prompt_text" _SEED="$seed_val" python3 -c "
+import json, os, random
 
-preset = json.load(open('$pfile'))
-wf_rel = preset['workflow']
+preset = json.load(open(os.environ['_PFILE']))
 overrides = list(preset.get('defaults', []))
 
-prompt_text = '''$prompt_text'''
-seed_val = '''$seed_val'''
+prompt_text = os.environ['_PROMPT']
+seed_val = os.environ['_SEED']
 prompt_node = preset.get('prompt_node', '')
 prompt_field = preset.get('prompt_field', '')
 seed_node = preset.get('seed_node', '')
@@ -752,17 +755,17 @@ print(json.dumps(overrides))
 ")
 
   local wf_rel
-  wf_rel=$(python3 -c "import json; print(json.load(open('$pfile'))['workflow'])")
+  wf_rel=$(_PFILE="$pfile" python3 -c "import json, os; print(json.load(open(os.environ['_PFILE']))['workflow'])")
   local wf_file="$PRESETS_DIR/$wf_rel"
 
   # Add any --set overrides
   if [[ ${#sets[@]} -gt 0 ]]; then
     local extra_sets
     extra_sets=$(_parse_sets "${sets[@]}")
-    overrides=$(python3 -c "
-import json
-a = json.loads('''$overrides''')
-b = json.loads('''$extra_sets''')
+    overrides=$(_A="$overrides" _B="$extra_sets" python3 -c "
+import json, os
+a = json.loads(os.environ['_A'])
+b = json.loads(os.environ['_B'])
 print(json.dumps(a + b))
 ")
   fi

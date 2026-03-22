@@ -6,7 +6,7 @@
       "base_precision": "bf16",
       "quantization": "fp8_e4m3fn_scaled",
       "load_device": "main_device",
-      "attention_mode": "sageattn"
+      "attention_mode": "sdpa"
     }
   },
   "2": {
@@ -17,11 +17,15 @@
     }
   },
   "3": {
-    "class_type": "WanVideoTextEncode",
+    "class_type": "WanVideoTextEncodeCached",
     "inputs": {
+      "model_name": "umt5_xxl_fp16.safetensors",
+      "precision": "bf16",
       "positive_prompt": "A cinematic aerial shot of a futuristic city at sunset, flying between gleaming skyscrapers, golden light reflecting off glass surfaces, volumetric clouds, 4K, smooth camera movement",
       "negative_prompt": "blurry, low quality, distorted, watermark, text, ugly, deformed",
-      "force_offload": true
+      "quantization": "disabled",
+      "use_disk_cache": true,
+      "device": "gpu"
     }
   },
   "4": {
