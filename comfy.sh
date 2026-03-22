@@ -152,8 +152,10 @@ _poll_and_download() {
           echo "Downloading outputs..."
           local job_detail
           job_detail=$(api_get "/api/jobs/$job_id")
-          local -a filenames
-          mapfile -t filenames < <(echo "$job_detail" | _parse_output_filenames)
+          local -a filenames=()
+          while IFS= read -r fn; do
+            [[ -n "$fn" ]] && filenames+=("$fn")
+          done < <(echo "$job_detail" | _parse_output_filenames)
           if [[ ${#filenames[@]} -gt 0 ]]; then
             _download_outputs "$out_dir" "${filenames[@]}"
             if [[ "$do_open" == "true" ]]; then
