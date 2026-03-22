@@ -1,6 +1,6 @@
 # claudecloudcomfy
 
-A command-line toolkit for the [Comfy Cloud API](https://docs.comfy.org/development/cloud/overview). Run ComfyUI workflows on cloud infrastructure from your terminal — 7 tested presets built from official ComfyUI Cloud workflows.
+A command-line toolkit for the [Comfy Cloud API](https://docs.comfy.org/development/cloud/overview). Run ComfyUI workflows on cloud infrastructure from your terminal — 5 verified presets built from official ComfyUI Cloud workflows.
 
 ## Setup
 
@@ -20,51 +20,32 @@ A command-line toolkit for the [Comfy Cloud API](https://docs.comfy.org/developm
 ## Quick start
 
 ```bash
-# Generate an image instantly
+# Generate an image instantly (~7s)
 ./comfy.sh gen --preset=z-turbo --prompt "cyberpunk portrait, neon lighting" --open
 
-# Animate a photo into video
+# Animate a photo into video (~30s)
 ./comfy.sh animate photo.jpg --preset=wan22-i2v --prompt "the scene comes to life" --open
 
-# Edit an image with instructions
+# Edit an image with instructions (~10s)
 ./comfy.sh animate photo.jpg --preset=qwen-edit --prompt "Replace the background with a beach sunset" --open
 
-# One photo → multi-angle cinematic video sequence
-./comfy.sh animate portrait.jpg --preset=multi-shot
+# 8 camera angles from one photo (~65s)
+./comfy.sh animate portrait.jpg --preset=multi-angles --open
 ```
 
 All outputs auto-download to `./downloads/`. Add `--open` to view immediately.
 
 ## Built-in presets
 
-All presets use official, tested ComfyUI Cloud workflows with 100% open models.
+All presets use official, tested ComfyUI Cloud workflows with 100% open models. Every preset listed here has been verified end-to-end.
 
-### Image Generation
-
-| Preset | Model | Resolution | Notes |
-|--------|-------|-----------|-------|
-| `z-turbo` | Z-Image Turbo | 1024x1024 | 8 steps, near-instant |
-
-### Image to Video
-
-| Preset | Model | Resolution | Notes |
-|--------|-------|-----------|-------|
-| `wan22-i2v` | Wan 2.2 14B dual-model | 640x640 | Official, 4-step LoRA option |
-| `ltx23-i2v` | LTX 2.3 22B | 1280x720 | Dual-pass upscale + audio |
-| `ltx23-flf2v` | LTX 2.3 22B | 1280x720 | First/last frame → video + audio |
-
-### Image Editing
-
-| Preset | Model | Notes |
-|--------|-------|-------|
-| `qwen-edit` | Qwen Edit 2509 | Instruction-based editing, 4 steps |
-| `multi-angles` | Qwen Edit + angle LoRA | 8 camera angles from 1 photo |
-
-### Multi-Stage Pipeline
-
-| Preset | Pipeline | Notes |
-|--------|----------|-------|
-| `multi-shot` | Qwen angles → Wan 2.2 I2V → RIFE → stitch | One photo → 5-clip cinematic sequence |
+| Preset | Type | Model | Time | Notes |
+|--------|------|-------|------|-------|
+| `z-turbo` | txt2img | Z-Image Turbo | ~7s | 1024x1024, 8 steps |
+| `wan22-i2v` | img2vid | Wan 2.2 14B dual-model | ~30s | 640x640, 4-step LoRA |
+| `ltx23-i2v` | img2vid + audio | LTX 2.3 22B | ~35s | 1280x720, dual-pass upscale |
+| `qwen-edit` | image edit | Qwen Edit 2509 | ~10s | Instruction-based, 4 steps |
+| `multi-angles` | 8-angle rerender | Qwen Edit + angle LoRA | ~65s | 8 camera angles from 1 photo |
 
 ## Usage
 
@@ -76,19 +57,23 @@ All presets use official, tested ComfyUI Cloud workflows with 100% open models.
 
 ```bash
 ./comfy.sh gen --preset=z-turbo --prompt "oil painting of a mountain" --seed=42 --open
-./comfy.sh preset-list
 ```
 
-### Animate (image to video / image editing)
+### Animate (image to video)
 
 ```bash
 ./comfy.sh animate photo.jpg --preset=wan22-i2v --prompt "camera zooms in slowly" --open
-./comfy.sh animate photo.jpg --preset=ltx23-i2v --prompt "the scene comes alive"
-./comfy.sh animate photo.jpg --preset=qwen-edit --prompt "Make it look like a watercolor painting"
-./comfy.sh animate portrait.jpg --preset=multi-shot
+./comfy.sh animate photo.jpg --preset=ltx23-i2v --prompt "the scene comes alive with motion"
 ```
 
-### Run workflows directly
+### Edit images
+
+```bash
+./comfy.sh animate photo.jpg --preset=qwen-edit --prompt "Make it look like a watercolor painting" --open
+./comfy.sh animate portrait.jpg --preset=multi-angles --open
+```
+
+### Run any workflow directly
 
 ```bash
 ./comfy.sh run workflow.json
@@ -106,28 +91,22 @@ All presets use official, tested ComfyUI Cloud workflows with 100% open models.
 
 ### Save your own presets
 
+Export any workflow from ComfyUI Cloud as API-format JSON, then:
+
 ```bash
-# Save any ComfyUI Cloud workflow as a preset
 ./comfy.sh preset-save mypreset workflow_api.json \
   --prompt-node=6.text --seed-node=3 --image-node=5 \
   --desc="My custom workflow"
 
 ./comfy.sh gen --preset=mypreset --prompt "your prompt"
 ./comfy.sh animate photo.jpg --preset=mypreset --prompt "animate this"
-```
-
-### Partner nodes (Flux Pro, Ideogram, etc.)
-
-```bash
-./comfy.sh go workflow.json --partner-key=your_key
-# Or set COMFY_PARTNER_KEY in .env
+./comfy.sh preset-list
 ```
 
 ### Monitor and manage
 
 ```bash
 ./comfy.sh monitor                          # Live WebSocket progress bars
-./comfy.sh monitor --job=<id>               # Filter to one job
 ./comfy.sh jobs --status=completed          # List jobs
 ./comfy.sh poll <job_id> --download --open  # Wait + download
 ./comfy.sh cancel <job_id>                  # Cancel pending
@@ -158,7 +137,7 @@ All presets use official, tested ComfyUI Cloud workflows with 100% open models.
 | File/Dir | Description |
 |----------|-------------|
 | `comfy.sh` | CLI — every API endpoint + gen, animate, batch, presets, monitoring |
-| `workflows/` | 7 official ComfyUI Cloud workflow JSONs |
+| `workflows/` | 5 official ComfyUI Cloud workflow JSONs (all verified) |
 | `presets/` | Saved preset configs (created locally via `preset-save`) |
 | `downloads/` | Generated outputs land here |
 | `REFERENCE.md` | Full API endpoint reference |
