@@ -102,6 +102,10 @@ A command-line toolkit for the [Comfy Cloud API](https://docs.comfy.org/developm
 
 See [REFERENCE.md](REFERENCE.md) for the full endpoint map or the [official docs](https://docs.comfy.org/development/cloud/overview).
 
+## Shoutout
+
+Big shoutout to the great and powerful [@PurzBeats](https://x.com/PurzBeats) for the inspiration and guidance on this project.
+
 ## License
 
 MIT
