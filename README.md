@@ -1,6 +1,6 @@
 # claudecloudcomfy
 
-A command-line toolkit for the [Comfy Cloud API](https://docs.comfy.org/development/cloud/overview). Run ComfyUI workflows on cloud infrastructure from your terminal.
+A command-line toolkit for the [Comfy Cloud API](https://docs.comfy.org/development/cloud/overview). Run ComfyUI workflows on cloud infrastructure from your terminal — with built-in txt2vid presets, batch generation, and auto-download.
 
 ## Setup
 
@@ -17,13 +17,69 @@ A command-line toolkit for the [Comfy Cloud API](https://docs.comfy.org/developm
    ./comfy.sh user
    ```
 
+## Quick start: Generate a video
+
+```bash
+# Fast draft (Wan 2.1 1.3B — ~80 seconds)
+./comfy.sh gen --preset=wan-fast --prompt "a wolf running through deep snow in a forest"
+
+# Best open quality (Wan 2.2 14B)
+./comfy.sh gen --preset=wan-14b --prompt "a wolf running through deep snow in a forest"
+
+# 720p cinematic (SkyReels V2 14B)
+./comfy.sh gen --preset=skyreels --prompt "a samurai on a cliff in a thunderstorm"
+```
+
+Videos auto-download to `./downloads/` and can auto-open with `--open`.
+
+## Built-in txt2vid presets
+
+| Preset | Model | Resolution | Speed | Best for |
+|--------|-------|-----------|-------|----------|
+| `wan-fast` | Wan 2.1 1.3B | 832x480 | Fast | Quick drafts, iteration |
+| `wan-14b` | Wan 2.2 14B | 832x480 | Slow | Best open-source quality |
+| `skyreels` | SkyReels V2 14B | 1280x720 | Slow | 720p cinematic |
+| `cogvideo` | CogVideoX 5B | 720x480 | Medium | Strong motion coherence |
+| `hunyuan` | HunyuanVideo 1.5 | 848x480 | Medium | Smooth motion |
+| `ltx` | LTX Video 2 19B | 768x512 | Fast | Fast high-res |
+| `mochi` | Mochi Preview | 848x480 | Medium | Different aesthetic |
+
+All presets are 100% open models running on cloud GPU — no per-generation API fees beyond your Comfy Cloud subscription.
+
 ## Usage
 
 ```bash
 ./comfy.sh <command> [args...]
 ```
 
-### Run workflows
+### Generate with presets
+
+```bash
+# Generate with any preset
+./comfy.sh gen --preset=wan-fast --prompt "neon Tokyo street at night" --open
+
+# Set a specific seed
+./comfy.sh gen --preset=cogvideo --prompt "a flower blooming" --seed=42
+
+# List available presets
+./comfy.sh preset-list
+```
+
+### Save your own presets
+
+```bash
+# Save a workflow as a reusable preset
+./comfy.sh preset-save mypreset workflow_api.json --prompt-node=6.text --seed-node=3 --desc="My custom workflow"
+
+# Use it
+./comfy.sh gen --preset=mypreset --prompt "your prompt here"
+
+# Manage presets
+./comfy.sh preset-show mypreset
+./comfy.sh preset-delete mypreset
+```
+
+### Run workflows directly
 
 ```bash
 # Submit a workflow (save as "API Format" JSON from ComfyUI)
@@ -50,24 +106,6 @@ A command-line toolkit for the [Comfy Cloud API](https://docs.comfy.org/developm
 
 # Cartesian product: every seed x every prompt
 ./comfy.sh batch-grid workflow.json seeds.txt prompts.txt "3" "6" "text"
-```
-
-### Presets
-
-```bash
-# Save a workflow as a reusable preset
-./comfy.sh preset-save sdxl workflow_api.json --prompt-node=6.text --seed-node=3 --desc="SDXL txt2img"
-
-# Generate from a preset
-./comfy.sh gen --preset=sdxl --prompt "a mountain at sunset" --seed=42 --open
-
-# Random seed by default
-./comfy.sh gen --preset=sdxl --prompt "neon Tokyo street"
-
-# List and manage presets
-./comfy.sh preset-list
-./comfy.sh preset-show sdxl
-./comfy.sh preset-delete sdxl
 ```
 
 ### Partner nodes (Flux Pro, Ideogram, etc.)
@@ -144,17 +182,20 @@ A command-line toolkit for the [Comfy Cloud API](https://docs.comfy.org/developm
 
 ## What's in the box
 
-| File | Description |
-|------|-------------|
-| `comfy.sh` | CLI wrapper — every endpoint + batch, presets, monitoring |
+| File/Dir | Description |
+|----------|-------------|
+| `comfy.sh` | CLI wrapper — every API endpoint + batch, presets, monitoring |
+| `workflows/` | Ready-to-run txt2vid workflow JSONs (Wan, CogVideo, Hunyuan, LTX, Mochi) |
 | `REFERENCE.md` | Quick-reference for all endpoints, statuses, and WebSocket messages |
 | `openapi-cloud.yaml` | Official OpenAPI 3.0.3 spec (3,700+ lines) |
 | `.env.example` | API key template (supports partner keys) |
-| `presets/` | Saved workflow presets (created via `preset-save`) |
+| `presets/` | Saved workflow presets (created locally via `preset-save`) |
+| `downloads/` | Generated outputs land here |
 
 ## Requirements
 
-- bash, curl, python3 (for JSON formatting and URL encoding)
+- bash, curl, python3
+- A [Comfy Cloud](https://www.comfy.org/cloud/pricing) subscription
 - Optional: [wscat](https://github.com/websockets/wscat) or [websocat](https://github.com/vi/websocat) for WebSocket streaming/monitoring
 
 ## API overview
