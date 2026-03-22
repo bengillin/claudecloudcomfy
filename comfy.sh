@@ -147,7 +147,7 @@ _poll_and_download() {
     fi
 
     case "$status" in
-      completed)
+      completed|success)
         if [[ "$do_download" == "true" ]]; then
           echo "Downloading outputs..."
           local job_detail
