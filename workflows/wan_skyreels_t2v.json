@@ -1,0 +1,74 @@
+{
+  "1": {
+    "class_type": "WanVideoModelLoader",
+    "inputs": {
+      "model": "Wan2_1-SkyReels-V2-T2V-14B-720P_fp8_e5m2.safetensors",
+      "base_precision": "bf16",
+      "quantization": "fp8_e4m3fn_scaled",
+      "load_device": "main_device",
+      "attention_mode": "sageattn"
+    }
+  },
+  "2": {
+    "class_type": "WanVideoVAELoader",
+    "inputs": {
+      "model_name": "wan_2.1_vae.safetensors",
+      "precision": "bf16"
+    }
+  },
+  "3": {
+    "class_type": "WanVideoTextEncode",
+    "inputs": {
+      "positive_prompt": "A high-quality cinematic shot of a samurai standing on a cliff edge during a thunderstorm, lightning illuminating the scene, rain pouring, dramatic atmosphere, 720p",
+      "negative_prompt": "blurry, low quality, distorted, watermark, text, ugly, deformed",
+      "force_offload": true
+    }
+  },
+  "4": {
+    "class_type": "WanVideoEmptyEmbeds",
+    "inputs": {
+      "width": 1280,
+      "height": 720,
+      "num_frames": 81
+    }
+  },
+  "5": {
+    "class_type": "WanVideoSampler",
+    "inputs": {
+      "model": ["1", 0],
+      "image_embeds": ["4", 0],
+      "text_embeds": ["3", 0],
+      "steps": 30,
+      "cfg": 6.0,
+      "shift": 5.0,
+      "seed": 42,
+      "force_offload": true,
+      "scheduler": "unipc",
+      "riflex_freq_index": 0
+    }
+  },
+  "6": {
+    "class_type": "WanVideoDecode",
+    "inputs": {
+      "vae": ["2", 0],
+      "samples": ["5", 0],
+      "enable_vae_tiling": true,
+      "tile_x": 272,
+      "tile_y": 272,
+      "tile_stride_x": 144,
+      "tile_stride_y": 128
+    }
+  },
+  "7": {
+    "class_type": "VHS_VideoCombine",
+    "inputs": {
+      "images": ["6", 0],
+      "frame_rate": 24,
+      "loop_count": 0,
+      "filename_prefix": "skyreels_t2v",
+      "format": "video/h265-mp4",
+      "pingpong": false,
+      "save_output": true
+    }
+  }
+}
