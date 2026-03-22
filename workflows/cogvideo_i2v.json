@@ -1,0 +1,78 @@
+{
+  "1": {
+    "class_type": "DownloadAndLoadCogVideoGGUFModel",
+    "inputs": {
+      "model": "CogVideoX_5b_I2V_GGUF_Q4_0.safetensors",
+      "vae_precision": "bf16",
+      "fp8_fastmode": false,
+      "load_device": "main_device",
+      "enable_sequential_cpu_offload": false
+    }
+  },
+  "2": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "INPUT_IMAGE_HASH"
+    }
+  },
+  "3": {
+    "class_type": "CogVideoImageEncode",
+    "inputs": {
+      "vae": ["1", 2],
+      "start_image": ["2", 0]
+    }
+  },
+  "4": {
+    "class_type": "CogVideoTextEncode",
+    "inputs": {
+      "clip": ["1", 1],
+      "prompt": "The image comes to life with natural motion, cinematic quality, smooth movement"
+    }
+  },
+  "5": {
+    "class_type": "CogVideoTextEncode",
+    "inputs": {
+      "clip": ["1", 1],
+      "prompt": "blurry, low quality, distorted, watermark, text, ugly"
+    }
+  },
+  "6": {
+    "class_type": "CogVideoSampler",
+    "inputs": {
+      "model": ["1", 0],
+      "positive": ["4", 0],
+      "negative": ["5", 0],
+      "num_frames": 49,
+      "steps": 50,
+      "cfg": 6.0,
+      "seed": 42,
+      "scheduler": "CogVideoXDDIM",
+      "image_cond_latents": ["3", 0]
+    }
+  },
+  "7": {
+    "class_type": "CogVideoDecode",
+    "inputs": {
+      "vae": ["1", 2],
+      "samples": ["6", 0],
+      "enable_vae_tiling": true,
+      "tile_sample_min_height": 240,
+      "tile_sample_min_width": 360,
+      "tile_overlap_factor_height": 0.2,
+      "tile_overlap_factor_width": 0.2,
+      "auto_tile_size": true
+    }
+  },
+  "8": {
+    "class_type": "VHS_VideoCombine",
+    "inputs": {
+      "images": ["7", 0],
+      "frame_rate": 8,
+      "loop_count": 0,
+      "filename_prefix": "cogvideo_i2v",
+      "format": "video/h265-mp4",
+      "pingpong": false,
+      "save_output": true
+    }
+  }
+}

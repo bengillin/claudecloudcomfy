@@ -278,6 +278,12 @@ WEBSOCKET
   monitor [--job=X] [--save] [--out=DIR]
                                  Pretty-print WebSocket progress stream
 
+IMAGE TO VIDEO
+  animate <image> --preset=<name> [--prompt "..."] [--seed N] [--open]
+                                 Upload image → run img2vid → download video
+  animate <image> <workflow.json> [--set ...] [--open]
+                                 Upload image → run custom i2v workflow
+
 EOF
 }
 
@@ -638,6 +644,7 @@ cmd_preset_save() {
   local desc=""
   local prompt_node_field=""
   local seed_node=""
+  local image_node=""
   local positional=()
 
   for arg in "$@"; do
@@ -645,13 +652,14 @@ cmd_preset_save() {
       --desc=*) desc="${arg#*=}" ;;
       --prompt-node=*) prompt_node_field="${arg#*=}" ;;
       --seed-node=*) seed_node="${arg#*=}" ;;
+      --image-node=*) image_node="${arg#*=}" ;;
       *) positional+=("$arg") ;;
     esac
   done
 
   name="${positional[0]:-}"
   wf_file="${positional[1]:-}"
-  [[ -z "$wf_file" ]] && { echo "Usage: preset-save <name> <wf.json> [--desc=...] [--prompt-node=N.field] [--seed-node=N]"; exit 1; }
+  [[ -z "$wf_file" ]] && { echo "Usage: preset-save <name> <wf.json> [--desc=...] [--prompt-node=N.field] [--seed-node=N] [--image-node=N]"; exit 1; }
 
   mkdir -p "$PRESETS_DIR"
 
@@ -665,7 +673,7 @@ cmd_preset_save() {
     p_field="${prompt_node_field#*.}"
   fi
 
-  _WF="${name}_workflow.json" _DESC="$desc" _PN="$p_node" _PF="$p_field" _SN="$seed_node" _OUT="$PRESETS_DIR/$name.json" python3 -c "
+  _WF="${name}_workflow.json" _DESC="$desc" _PN="$p_node" _PF="$p_field" _SN="$seed_node" _IN="$image_node" _OUT="$PRESETS_DIR/$name.json" python3 -c "
 import json, os
 preset = {
     'workflow': os.environ['_WF'],
@@ -673,6 +681,7 @@ preset = {
     'prompt_node': os.environ['_PN'],
     'prompt_field': os.environ['_PF'],
     'seed_node': os.environ['_SN'],
+    'image_node': os.environ['_IN'],
     'defaults': []
 }
 preset = {k: v for k, v in preset.items() if v != '' or k == 'defaults'}
@@ -779,6 +788,152 @@ print(json.dumps(a + b))
   payload=$(_build_payload "$wf_file" "$overrides" "$extra_data")
 
   echo "Generating with preset: $preset_name"
+  local resp
+  resp=$(api_post "/api/prompt" "$payload")
+  local prompt_id
+  prompt_id=$(echo "$resp" | python3 -c "import json,sys; print(json.load(sys.stdin).get('prompt_id',''))")
+
+  if [[ -z "$prompt_id" ]]; then
+    echo "Submit failed:"
+    echo "$resp" | pretty
+    return 1
+  fi
+
+  echo "Job: $prompt_id"
+  _poll_and_download "$prompt_id" "true" "$out_dir" "$do_open"
+}
+
+# ── Animate (Image to Video) ─────────────────────────────────────────────
+
+cmd_animate() {
+  local image_file=""
+  local preset_name=""
+  local wf_file=""
+  local prompt_text=""
+  local seed_val=""
+  local sets=()
+  local do_open="false"
+  local out_dir="$SCRIPT_DIR/downloads"
+  local partner_key="${COMFY_PARTNER_KEY:-}"
+
+  local prev=""
+  for arg in "$@"; do
+    case "$arg" in
+      --preset=*) preset_name="${arg#*=}" ;;
+      --prompt=*) prompt_text="${arg#*=}" ;;
+      --prompt)   ;;
+      --seed=*)   seed_val="${arg#*=}" ;;
+      --set=*)    sets+=("${arg#*=}") ;;
+      --set)      ;;
+      --open)     do_open="true" ;;
+      --out=*)    out_dir="${arg#*=}" ;;
+      --partner-key=*) partner_key="${arg#*=}" ;;
+      *)
+        if [[ "$prev" == "--prompt" ]]; then
+          prompt_text="$arg"
+        elif [[ "$prev" == "--set" ]]; then
+          sets+=("$arg")
+        elif [[ -z "$image_file" ]]; then
+          image_file="$arg"
+        elif [[ -z "$wf_file" && -z "$preset_name" ]]; then
+          wf_file="$arg"
+        fi
+        ;;
+    esac
+    prev="$arg"
+  done
+
+  [[ -z "$image_file" ]] && { echo "Usage: animate <image> --preset=<name> [--prompt \"...\"] [--open]"; exit 1; }
+  [[ -z "$preset_name" && -z "$wf_file" ]] && { echo "Provide --preset=<name> or a workflow JSON"; exit 1; }
+
+  # Step 1: Upload the image
+  echo "Uploading image: $image_file"
+  local upload_resp
+  upload_resp=$(curl -sS "${AUTH[@]}" -F "image=@$image_file" "$BASE_URL/api/upload/image")
+  local uploaded_name
+  uploaded_name=$(echo "$upload_resp" | python3 -c "import json,sys; print(json.load(sys.stdin).get('name',''))")
+
+  if [[ -z "$uploaded_name" ]]; then
+    echo "Upload failed:"
+    echo "$upload_resp" | pretty
+    return 1
+  fi
+  echo "Uploaded as: $uploaded_name"
+
+  # Step 2: Build the workflow with image reference
+  local overrides=""
+  if [[ -n "$preset_name" ]]; then
+    local pfile="$PRESETS_DIR/$preset_name.json"
+    [[ -f "$pfile" ]] || { echo "Preset '$preset_name' not found. Run: preset-list"; exit 1; }
+
+    overrides=$(_PFILE="$pfile" _PROMPT="$prompt_text" _SEED="$seed_val" python3 -c "
+import json, os, random
+
+preset = json.load(open(os.environ['_PFILE']))
+overrides = list(preset.get('defaults', []))
+
+prompt_text = os.environ['_PROMPT']
+seed_val = os.environ['_SEED']
+prompt_node = preset.get('prompt_node', '')
+prompt_field = preset.get('prompt_field', '')
+seed_node = preset.get('seed_node', '')
+image_node = preset.get('image_node', '')
+image_field = preset.get('image_field', 'image')
+
+if prompt_text and prompt_node and prompt_field:
+    overrides.append({'node': prompt_node, 'field': prompt_field, 'value': prompt_text})
+
+if seed_node:
+    if seed_val == '' or seed_val == 'random':
+        sv = random.randint(0, 2**32 - 1)
+    else:
+        sv = int(seed_val)
+    overrides.append({'node': seed_node, 'field': 'seed', 'value': sv})
+
+print(json.dumps(overrides))
+")
+    local wf_rel
+    wf_rel=$(_PFILE="$pfile" python3 -c "import json, os; print(json.load(open(os.environ['_PFILE']))['workflow'])")
+    wf_file="$PRESETS_DIR/$wf_rel"
+
+    # Get image_node from preset
+    local image_node
+    image_node=$(_PFILE="$pfile" python3 -c "import json, os; print(json.load(open(os.environ['_PFILE'])).get('image_node', '5'))")
+  else
+    overrides="[]"
+    # Default: image node is "5" (convention in our i2v workflows)
+    local image_node="5"
+  fi
+
+  # Add image override
+  overrides=$(_A="$overrides" _INODE="$image_node" _INAME="$uploaded_name" python3 -c "
+import json, os
+a = json.loads(os.environ['_A'])
+a.append({'node': os.environ['_INODE'], 'field': 'image', 'value': os.environ['_INAME']})
+print(json.dumps(a))
+")
+
+  # Add any --set overrides
+  if [[ ${#sets[@]} -gt 0 ]]; then
+    local extra_sets
+    extra_sets=$(_parse_sets "${sets[@]}")
+    overrides=$(_A="$overrides" _B="$extra_sets" python3 -c "
+import json, os
+a = json.loads(os.environ['_A'])
+b = json.loads(os.environ['_B'])
+print(json.dumps(a + b))
+")
+  fi
+
+  local extra_data="{}"
+  if [[ -n "$partner_key" ]]; then
+    extra_data="{\"api_key_comfy_org\": \"$partner_key\"}"
+  fi
+
+  local payload
+  payload=$(_build_payload "$wf_file" "$overrides" "$extra_data")
+
+  echo "Animating..."
   local resp
   resp=$(api_post "/api/prompt" "$payload")
   local prompt_id
