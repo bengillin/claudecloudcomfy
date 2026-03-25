@@ -58,6 +58,18 @@ class Scene:
 
 
 @dataclass
+class CreativeBrief:
+    """Claude's creative analysis of the song — the artistic vision."""
+    narrative: str = ""          # overall story arc
+    mood: str = ""               # emotional tone
+    visual_style: str = ""       # look and feel
+    color_palette: str = ""      # dominant colors
+    suggested_elements: list[dict] = field(default_factory=list)  # [{category, id, name, description}]
+    suggested_scenes: list[dict] = field(default_factory=list)    # [{id, description, element_ids, visual, motion}]
+    notes: str = ""              # any other creative direction
+
+
+@dataclass
 class Storyboard:
     """Full storyboard for a music video."""
     title: str
@@ -65,6 +77,7 @@ class Storyboard:
     duration: float
     scenes: list[Scene] = field(default_factory=list)
     elements: list[WorldElement] = field(default_factory=list)
+    brief: CreativeBrief = field(default_factory=CreativeBrief)
     camera_style: str = ""
     global_style: str = ""
 
@@ -75,6 +88,7 @@ class Storyboard:
             "duration": self.duration,
             "camera_style": self.camera_style,
             "global_style": self.global_style,
+            "brief": asdict(self.brief),
             "elements": [asdict(e) for e in self.elements],
             "scenes": [asdict(s) for s in self.scenes],
         }
@@ -85,9 +99,11 @@ class Storyboard:
         data = json.loads(path.read_text())
         scenes = [Scene(**s) for s in data.pop("scenes", [])]
         elements = [WorldElement(**e) for e in data.pop("elements", [])]
-        # Backward compat: old storyboards had world_elements as dict
+        brief_data = data.pop("brief", {})
+        brief = CreativeBrief(**brief_data) if brief_data else CreativeBrief()
+        # Backward compat
         data.pop("world_elements", None)
-        return cls(**data, scenes=scenes, elements=elements)
+        return cls(**data, scenes=scenes, elements=elements, brief=brief)
 
     def get_element(self, element_id: str) -> WorldElement | None:
         for e in self.elements:

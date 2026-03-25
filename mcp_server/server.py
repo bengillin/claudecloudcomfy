@@ -715,6 +715,142 @@ def comfy_project_status(name: str) -> str:
     return pfile.read_text()
 
 
+# ── MCP Tools: Music Video — Creative Brief ──────────────────────────────
+
+
+@mcp.tool()
+def comfy_mv_set_brief(
+    project_name: str,
+    narrative: str | None = None,
+    mood: str | None = None,
+    visual_style: str | None = None,
+    color_palette: str | None = None,
+    camera_style: str | None = None,
+    global_style: str | None = None,
+    suggested_elements: list[dict] | None = None,
+    suggested_scenes: list[dict] | None = None,
+    notes: str | None = None,
+) -> str:
+    """Set the creative brief — Claude's artistic vision for the music video.
+
+    Call this after reading the transcript from comfy_mv_plan. Analyze the
+    lyrics, mood, and narrative arc, then set the full creative direction.
+
+    When suggested_elements is provided, those elements are automatically
+    created in the project (user can then upload source images or generate
+    references for them).
+
+    When suggested_scenes is provided, those descriptions are saved but not
+    yet applied — use comfy_mv_set_prompts to finalize scene prompts after
+    element references are approved.
+
+    Args:
+        project_name: Project directory name.
+        narrative: Overall story arc (e.g. "A defiant musician fights back after police raid his home...").
+        mood: Emotional tone (e.g. "defiant, humorous, triumphant").
+        visual_style: Look and feel (e.g. "cinematic, Kodak 500T warm tones, dramatic lighting").
+        color_palette: Dominant colors (e.g. "red white blue, gold, neon police lights").
+        camera_style: Camera language (e.g. "mix of close-ups for lip sync and wide establishing shots").
+        global_style: Applied to all generations.
+        suggested_elements: List of {category, id, name, description} dicts. Auto-created as elements.
+        suggested_scenes: List of {id, description, element_ids, visual, motion} dicts. Saved to brief.
+        notes: Any other creative direction.
+    """
+    from .music_video import Storyboard, WorldElement
+
+    project_dir = PROJECTS_DIR / project_name
+    sb_path = project_dir / "storyboard.json"
+    if not sb_path.exists():
+        return json.dumps({"error": f"Project '{project_name}' not found"})
+
+    sb = Storyboard.load(sb_path)
+
+    # Update brief fields
+    if narrative is not None:
+        sb.brief.narrative = narrative
+    if mood is not None:
+        sb.brief.mood = mood
+    if visual_style is not None:
+        sb.brief.visual_style = visual_style
+    if color_palette is not None:
+        sb.brief.color_palette = color_palette
+    if camera_style is not None:
+        sb.camera_style = camera_style
+    if global_style is not None:
+        sb.global_style = global_style
+    if notes is not None:
+        sb.brief.notes = notes
+
+    # Auto-create suggested elements
+    created = 0
+    if suggested_elements:
+        sb.brief.suggested_elements = suggested_elements
+        for el_data in suggested_elements:
+            eid = el_data.get("id", "")
+            if eid and not sb.get_element(eid):
+                elements_dir = project_dir / "elements" / eid
+                elements_dir.mkdir(parents=True, exist_ok=True)
+                sb.elements.append(WorldElement(
+                    id=eid,
+                    category=el_data.get("category", "what"),
+                    name=el_data.get("name", eid),
+                    description=el_data.get("description", ""),
+                ))
+                created += 1
+
+    if suggested_scenes:
+        sb.brief.suggested_scenes = suggested_scenes
+
+    sb.save(sb_path)
+
+    return json.dumps({
+        "status": "brief_set",
+        "elements_created": created,
+        "total_elements": len(sb.elements),
+    })
+
+
+@mcp.tool()
+def comfy_mv_get_brief(project_name: str) -> str:
+    """Get the creative brief and full transcript for a music video project.
+
+    Returns the brief (narrative, mood, style, suggested elements/scenes)
+    plus the raw transcript with timestamps. Use this to review the creative
+    direction or to inform prompt writing.
+
+    Args:
+        project_name: Project directory name.
+    """
+    from .music_video import Storyboard
+    from dataclasses import asdict
+
+    project_dir = PROJECTS_DIR / project_name
+    sb_path = project_dir / "storyboard.json"
+    if not sb_path.exists():
+        return json.dumps({"error": f"Project '{project_name}' not found"})
+
+    sb = Storyboard.load(sb_path)
+
+    return json.dumps({
+        "title": sb.title,
+        "duration": round(sb.duration, 1),
+        "brief": asdict(sb.brief),
+        "global_style": sb.global_style,
+        "camera_style": sb.camera_style,
+        "elements": [{"id": e.id, "category": e.category, "name": e.name,
+                       "description": e.description,
+                       "source_images": len(e.source_images),
+                       "reference_images": len(e.reference_images)}
+                      for e in sb.elements],
+        "scenes": [{"id": s.id, "start": round(s.start, 1), "end": round(s.end, 1),
+                     "duration": round(s.duration, 1), "text": s.text,
+                     "segment_type": s.segment_type,
+                     "has_prompt": bool(s.prompt),
+                     "element_refs": s.element_refs}
+                    for s in sb.scenes],
+    }, indent=2)
+
+
 # ── MCP Tools: Music Video — World Building ──────────────────────────────
 
 
@@ -1045,6 +1181,11 @@ def comfy_mv_plan(
             "segment_type": s.segment_type,
         })
 
+    # Full transcript for Claude to analyze
+    full_lyrics = "\n".join(
+        f"[{s.start:.1f}s - {s.end:.1f}s] {s.text}" for s in sb.scenes if s.text
+    )
+
     return json.dumps({
         "status": "planned",
         "project": str(project_dir),
@@ -1052,6 +1193,8 @@ def comfy_mv_plan(
         "duration": round(sb.duration, 1),
         "scene_count": len(sb.scenes),
         "scenes": scenes_summary,
+        "full_lyrics": full_lyrics,
+        "next_step": "Call comfy_mv_set_brief with your creative analysis — narrative, mood, visual style, suggested elements (who/what/when/where/why), and suggested scenes. Then the user can upload reference images or approve auto-generation.",
     }, indent=2)
 
 

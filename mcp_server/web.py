@@ -30,6 +30,8 @@ from .server import (
     comfy_project_log,
     comfy_project_status,
     comfy_mv_plan,
+    comfy_mv_set_brief,
+    comfy_mv_get_brief,
     comfy_mv_add_element,
     comfy_mv_generate_element,
     comfy_mv_list_elements,
@@ -190,6 +192,17 @@ async def api_mv_plan(project: str, file: UploadFile = File(...), title: str = F
         tmp.write(await file.read())
         audio_path = tmp.name
     return _j(await _bg(comfy_mv_plan, audio_path=audio_path, title=title or project, project_name=project))
+
+
+@app.get("/api/mv/{project}/brief")
+async def api_mv_get_brief(project: str):
+    return _j(await _bg(comfy_mv_get_brief, project_name=project))
+
+
+@app.post("/api/mv/{project}/brief")
+async def api_mv_set_brief(project: str, req: Request):
+    body = await req.json()
+    return _j(await _bg(comfy_mv_set_brief, project_name=project, **body))
 
 
 @app.post("/api/mv/{project}/elements")
