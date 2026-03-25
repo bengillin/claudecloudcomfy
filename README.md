@@ -153,7 +153,7 @@ All presets use official, tested ComfyUI Cloud workflows with 100% open models. 
 
 | Preset | Type | Model | Time | Output | Notes |
 |--------|------|-------|------|--------|-------|
-| `z-turbo` | txt2img | Z-Image Turbo | ~15s | png | 1024x1024, 8 steps |
+| `z-turbo` | txt2img | Z-Image Turbo | ~15s | png | Any aspect ratio, 8 steps |
 | `wan22-i2v` | img2vid | Wan 2.2 14B dual-model | ~30s | mp4 | 640x640, 4-step LoRA |
 | `ltx23-i2v` | img2vid + audio | LTX 2.3 22B | ~60s | mp4 | 720p 25fps, dual-pass upscale |
 | `ltx23-a2v` | img + audio → vid | LTX 2.3 22B | ~45s | mp4 | Audio-conditioned lip sync, motion synced to music |
@@ -253,14 +253,15 @@ Export any workflow from ComfyUI Cloud as API-format JSON, then:
 |----------|-------------|
 | `comfy.sh` | CLI — every API endpoint + gen, animate, batch, presets, monitoring |
 | `mcp_server/server.py` | FastMCP server — 29 tools, 2 resources, 2 prompts |
-| `mcp_server/config.py` | Path resolution + .env loading for MCP server |
-| `.mcp.json` | Claude Code auto-connection config |
+| `mcp_server/web.py` | FastAPI web server — wraps MCP tools as REST endpoints |
+| `mcp_server/static/index.html` | Web UI — Studio + Music Video modes, zero build step |
 | `mcp_server/music_video.py` | Music video pipeline — transcription, scene planning, stitching |
+| `mcp_server/config.py` | Path resolution + .env loading |
+| `.mcp.json` | Claude Code auto-connection config |
 | `tests/test_server.py` | 29 tests — presets, tools, errors, projects (no API calls) |
 | `.github/workflows/` | CI — runs tests on push/PR via GitHub Actions |
-| `pyproject.toml` | Python project config (uv, mcp dependency) |
-| `workflows/` | 5 official ComfyUI Cloud workflow JSONs (all verified) |
-| `presets/` | Preset configs with prompt guides and capabilities |
+| `pyproject.toml` | Python project config (uv, FastAPI, whisper) |
+| `presets/` | 6 preset configs + workflow JSONs (all verified) |
 | `projects/` | Creative project tracking (created by MCP tools) |
 | `downloads/` | Generated outputs land here |
 | `REFERENCE.md` | Full API endpoint reference |
@@ -269,9 +270,11 @@ Export any workflow from ComfyUI Cloud as API-format JSON, then:
 
 ## Requirements
 
-- bash, curl, python3
-- [uv](https://docs.astral.sh/uv/) (for MCP server Python dependencies)
-- A [Comfy Cloud](https://www.comfy.org/cloud/pricing) subscription
+- **CLI only**: bash, curl — that's it
+- **Web UI / MCP server**: [uv](https://docs.astral.sh/uv/) (Python package manager)
+- **Music video pipeline**: adds [whisper](https://github.com/openai/whisper) (auto-installed by `uv sync`)
+- **Claude Code**: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI
+- A [Comfy Cloud](https://www.comfy.org/cloud/pricing) subscription (API key)
 - Optional: [wscat](https://github.com/websockets/wscat) or [websocat](https://github.com/vi/websocat) for WebSocket monitoring
 
 ## API overview
