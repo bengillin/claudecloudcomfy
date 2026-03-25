@@ -62,6 +62,23 @@ Claude will create a project, generate and evaluate each step, and log everythin
 
 Claude will use `comfy_submit` to fire off all 4 jobs simultaneously, then collect results with `comfy_job_wait` — no blocking.
 
+**Music videos:**
+
+```
+> "Make a music video for this track" [paste audio file path]
+```
+
+Claude will:
+1. Transcribe the song with Whisper → build a timed storyboard
+2. Plan visual + motion prompts for each scene based on lyrics and mood
+3. Generate scene images (z-turbo at 1280x720)
+4. Split audio into per-scene segments
+5. Run audio-conditioned video generation (LTX 2.3 a2v) — motion syncs to the music
+6. Stitch all clips + overlay the original audio track
+7. Review, refine individual scenes, and re-stitch
+
+The storyboard persists as JSON — resume across sessions, retry failed scenes, tweak prompts and regenerate specific clips.
+
 ### MCP tools
 
 | Tool | Description |
@@ -84,6 +101,11 @@ Claude will use `comfy_submit` to fire off all 4 jobs simultaneously, then colle
 | `comfy_project_list` | List all projects |
 | `comfy_project_log` | Log a generation step |
 | `comfy_project_status` | Get full project state |
+| `comfy_mv_plan` | Transcribe song + build timed storyboard |
+| `comfy_mv_set_prompts` | Set visual/motion prompts per scene |
+| `comfy_mv_generate` | Generate images, split audio, create video clips |
+| `comfy_mv_stitch` | Concatenate clips + overlay original audio |
+| `comfy_mv_status` | Check project progress and find failures |
 
 ### MCP resources & prompts
 
@@ -119,10 +141,11 @@ All presets use official, tested ComfyUI Cloud workflows with 100% open models. 
 | `z-turbo` | txt2img | Z-Image Turbo | ~15s | png | 1024x1024, 8 steps |
 | `wan22-i2v` | img2vid | Wan 2.2 14B dual-model | ~30s | mp4 | 640x640, 4-step LoRA |
 | `ltx23-i2v` | img2vid + audio | LTX 2.3 22B | ~60s | mp4 | 720p 25fps, dual-pass upscale |
+| `ltx23-a2v` | img + audio → vid | LTX 2.3 22B | ~45s | mp4 | Audio-conditioned, motion synced to music |
 | `qwen-edit` | image edit | Qwen Edit 2509 | ~20s | png | Instruction-based, 4 steps |
 | `multi-angles` | 8-angle rerender | Qwen Edit + angle LoRA | ~45s | png | 8 camera angles from 1 photo |
 
-Each preset includes a `prompt_guide` with model-specific guidance — the MCP server exposes these via `comfy://presets/{name}` so Claude reads them before crafting prompts.
+Each preset includes a `prompt_guide` with model-specific guidance — the MCP server exposes these via `comfy://presets/{name}` so Claude reads them before crafting prompts. The `ltx23-a2v` preset powers the music video pipeline — it encodes real audio into the latent space so generated motion syncs to the music.
 
 ## Usage
 
@@ -214,9 +237,10 @@ Export any workflow from ComfyUI Cloud as API-format JSON, then:
 | File/Dir | Description |
 |----------|-------------|
 | `comfy.sh` | CLI — every API endpoint + gen, animate, batch, presets, monitoring |
-| `mcp_server/server.py` | FastMCP server — 18 tools, 2 resources, 2 prompts |
+| `mcp_server/server.py` | FastMCP server — 23 tools, 2 resources, 2 prompts |
 | `mcp_server/config.py` | Path resolution + .env loading for MCP server |
 | `.mcp.json` | Claude Code auto-connection config |
+| `mcp_server/music_video.py` | Music video pipeline — transcription, scene planning, stitching |
 | `tests/test_server.py` | 29 tests — presets, tools, errors, projects (no API calls) |
 | `.github/workflows/` | CI — runs tests on push/PR via GitHub Actions |
 | `pyproject.toml` | Python project config (uv, mcp dependency) |
