@@ -84,6 +84,21 @@
     </label>
   </div>
 
+  <!-- Aspect Ratio -->
+  <div>
+    <h2 class="text-sm font-medium text-gray-400 mb-2">Aspect Ratio</h2>
+    <div class="flex gap-1.5 flex-wrap">
+      <template x-for="ar in aspectRatios" :key="ar.label">
+        <button @click="aspectRatio=ar"
+                :class="aspectRatio.label===ar.label ? 'ring-2 ring-blue-500 bg-gray-800' : 'bg-gray-900'"
+                class="px-3 py-1.5 rounded-lg text-xs border border-gray-800 hover:border-gray-600">
+          <span x-text="ar.label"></span>
+          <span class="text-gray-600 ml-1" x-text="ar.w+'×'+ar.h"></span>
+        </button>
+      </template>
+    </div>
+  </div>
+
   <!-- Controls -->
   <div class="flex gap-2 items-center">
     <input x-model="seed" type="number" placeholder="Seed (random)" class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm w-28">
@@ -288,6 +303,17 @@ function app() {
     mode: 'studio',
     // Studio
     presets: {},
+    aspectRatios: [
+      { label: '1:1',   w: 1024, h: 1024 },
+      { label: '16:9',  w: 1280, h: 720 },
+      { label: '9:16',  w: 720,  h: 1280 },
+      { label: '4:3',   w: 1024, h: 768 },
+      { label: '3:4',   w: 768,  h: 1024 },
+      { label: '21:9',  w: 1344, h: 576 },
+      { label: '3:2',   w: 1152, h: 768 },
+      { label: '2:3',   w: 768,  h: 1152 },
+    ],
+    aspectRatio: { label: '1:1', w: 1024, h: 1024 },
     selectedPreset: null,
     prompt: '',
     seed: '',
@@ -354,6 +380,8 @@ function app() {
       try {
         const body = { preset: this.selectedPreset, prompt: this.prompt || undefined };
         if (this.seed) body.seed = parseInt(this.seed);
+        // Pass aspect ratio as overrides
+        body.overrides = [`57:13.width=${this.aspectRatio.w}`, `57:13.height=${this.aspectRatio.h}`];
 
         const p = this.presets[this.selectedPreset];
         if (p?.has_image_input && this.uploadedFile) {
