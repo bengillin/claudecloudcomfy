@@ -54,6 +54,14 @@ Claude will:
 
 Claude will create a project, generate and evaluate each step, and log everything for continuity across sessions.
 
+**Parallel generation:**
+
+```
+> "Give me 4 variations of that hero image with different seeds"
+```
+
+Claude will use `comfy_submit` to fire off all 4 jobs simultaneously, then collect results with `comfy_job_wait` — no blocking.
+
 ### MCP tools
 
 | Tool | Description |
@@ -208,7 +216,9 @@ Export any workflow from ComfyUI Cloud as API-format JSON, then:
 | `comfy.sh` | CLI — every API endpoint + gen, animate, batch, presets, monitoring |
 | `mcp_server/server.py` | FastMCP server — 18 tools, 2 resources, 2 prompts |
 | `mcp_server/config.py` | Path resolution + .env loading for MCP server |
+| `.mcp.json` | Claude Code auto-connection config |
 | `tests/test_server.py` | 29 tests — presets, tools, errors, projects (no API calls) |
+| `.github/workflows/` | CI — runs tests on push/PR via GitHub Actions |
 | `pyproject.toml` | Python project config (uv, mcp dependency) |
 | `workflows/` | 5 official ComfyUI Cloud workflow JSONs (all verified) |
 | `presets/` | Preset configs with prompt guides and capabilities |
