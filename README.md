@@ -69,15 +69,16 @@ Claude will use `comfy_submit` to fire off all 4 jobs simultaneously, then colle
 ```
 
 Claude will:
-1. Transcribe the song with Whisper → build a timed storyboard
-2. Plan visual + motion prompts for each scene based on lyrics and mood
-3. Generate scene images (z-turbo at 1280x720)
-4. Split audio into per-scene segments
-5. Run audio-conditioned video generation (LTX 2.3 a2v) — motion syncs to the music
-6. Stitch all clips + overlay the original audio track
-7. Review, refine individual scenes, and re-stitch
+1. **World build** — establish characters, locations, props, mood (5W framework: who/what/when/where/why)
+2. **Generate references** — create and approve visual references for each element (from user photos or generated)
+3. **Transcribe** the song with Whisper → build a timed storyboard
+4. **Plan scenes** — Claude decides cut points based on lyrics and musical moments, assigns elements per scene
+5. **Generate scene images** from approved references (qwen-edit, z-turbo, multi-angles)
+6. **Animate** with audio-conditioned lip sync (LTX 2.3 a2v) — characters rap to the actual track
+7. **Stitch** all clips + overlay the original audio
+8. **Refine** — view output, tweak prompts, regenerate specific scenes, re-stitch
 
-The `ltx23-a2v` preset encodes real audio into the latent space — characters lip-sync to vocals, and motion follows the beat. The storyboard persists as JSON — resume across sessions, retry failed scenes, tweak prompts and regenerate specific clips.
+Characters maintain visual consistency across scenes through approved reference images. The `ltx23-a2v` preset encodes real audio into the latent space — characters lip-sync to vocals, and motion follows the beat. The storyboard persists as JSON — resume across sessions, retry failed scenes, tweak prompts and regenerate specific clips.
 
 ### MCP tools
 
@@ -101,6 +102,10 @@ The `ltx23-a2v` preset encodes real audio into the latent space — characters l
 | `comfy_project_list` | List all projects |
 | `comfy_project_log` | Log a generation step |
 | `comfy_project_status` | Get full project state |
+| `comfy_mv_add_element` | Add a world element (character, location, prop, mood) |
+| `comfy_mv_generate_element` | Generate reference images for an element |
+| `comfy_mv_list_elements` | List elements with reference image status |
+| `comfy_mv_update_element` | Refine element description or remove bad references |
 | `comfy_mv_plan` | Transcribe song + build timed storyboard |
 | `comfy_mv_set_prompts` | Set visual/motion prompts per scene |
 | `comfy_mv_generate` | Generate images, split audio, create video clips |
@@ -237,7 +242,7 @@ Export any workflow from ComfyUI Cloud as API-format JSON, then:
 | File/Dir | Description |
 |----------|-------------|
 | `comfy.sh` | CLI — every API endpoint + gen, animate, batch, presets, monitoring |
-| `mcp_server/server.py` | FastMCP server — 23 tools, 2 resources, 2 prompts |
+| `mcp_server/server.py` | FastMCP server — 27 tools, 2 resources, 2 prompts |
 | `mcp_server/config.py` | Path resolution + .env loading for MCP server |
 | `.mcp.json` | Claude Code auto-connection config |
 | `mcp_server/music_video.py` | Music video pipeline — transcription, scene planning, stitching |
