@@ -1183,8 +1183,11 @@ def comfy_mv_plan(
             "start": round(s.start, 1),
             "end": round(s.end, 1),
             "duration": round(s.duration, 1),
-            "text": s.text[:80],
+            "text": s.text,
             "segment_type": s.segment_type,
+            "prompt": s.prompt,
+            "motion_prompt": s.motion_prompt,
+            "element_refs": s.element_refs,
         })
 
     # Full transcript for Claude to analyze
