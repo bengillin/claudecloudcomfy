@@ -167,21 +167,21 @@ def split_audio(audio_path: str, scenes: list[Scene], output_dir: Path) -> list[
 
 def merge_short_scenes(
     scenes: list[Scene],
-    target_duration: float = 12.0,
-    max_duration: float = 30.0,
     min_duration: float = 5.0,
+    max_duration: float = 30.0,
 ) -> list[Scene]:
-    """Merge transcript segments into clip-sized scenes for video generation.
+    """Merge transcript segments into scenes based on musical/narrative transitions.
 
-    Groups adjacent segments into 10-15s clips by default. Respects segment
-    type boundaries (won't merge a verse into a chorus). Allows up to 30s
-    for sustained moments.
+    Cuts happen at natural boundaries — segment type changes (verse→chorus),
+    silence gaps, and mood shifts. Clip lengths vary based on what the song
+    needs: a 6s hook stays short, a 20s verse that holds one vibe stays long.
+
+    The min/max are guardrails, not targets. The song determines clip length.
 
     Args:
         scenes: Raw transcript segments.
-        target_duration: Ideal clip length in seconds (default 12s).
-        max_duration: Maximum clip length (default 30s).
-        min_duration: Minimum clip length — keep merging until at least this (default 5s).
+        min_duration: Minimum clip length — merge below this (default 5s).
+        max_duration: Maximum clip length — force a cut above this (default 30s).
     """
     if not scenes:
         return scenes
@@ -197,37 +197,39 @@ def merge_short_scenes(
     for scene in scenes[1:]:
         prev = merged[-1]
         combined_duration = scene.end - prev.start
-        same_type = (
-            scene.segment_type == prev.segment_type
-            or prev.segment_type == "instrumental"
-            or scene.segment_type == "instrumental"
-        )
 
-        # Merge if:
-        # 1. Previous scene is below minimum duration, OR
-        # 2. Combined would be under target and same segment type, OR
-        # 3. Previous scene is under target and combined won't exceed max
-        should_merge = (
-            (prev.duration < min_duration)
-            or (combined_duration <= target_duration and same_type)
-            or (prev.duration < target_duration and combined_duration <= max_duration and same_type)
+        # Detect natural transition points
+        type_change = (
+            scene.segment_type != prev.segment_type
+            and scene.segment_type != "instrumental"
+            and prev.segment_type != "instrumental"
         )
+        gap = scene.start - prev.end > 0.5  # silence gap between segments
+        would_exceed_max = combined_duration > max_duration
+        prev_too_short = prev.duration < min_duration
 
-        if should_merge:
+        # Cut at natural transitions — UNLESS the previous clip is too short
+        if prev_too_short and not would_exceed_max:
+            # Keep merging — clip needs more content
             prev.end = scene.end
             if scene.text:
                 prev.text = f"{prev.text} {scene.text}".strip()
             if prev.segment_type == "instrumental" and scene.segment_type != "instrumental":
                 prev.segment_type = scene.segment_type
-        else:
-            scene.id = len(merged)
+        elif type_change or gap or would_exceed_max:
+            # Natural cut point — start a new scene
             merged.append(Scene(
-                id=scene.id,
+                id=len(merged),
                 start=scene.start,
                 end=scene.end,
                 text=scene.text,
                 segment_type=scene.segment_type,
             ))
+        else:
+            # Same segment type, no gap, within limits — merge
+            prev.end = scene.end
+            if scene.text:
+                prev.text = f"{prev.text} {scene.text}".strip()
 
     # Handle last scene being too short
     if len(merged) > 1 and merged[-1].duration < min_duration:
@@ -344,14 +346,14 @@ def stitch_video(
 def plan(
     audio_path: str,
     title: str,
-    target_duration: float = 12.0,
-    max_duration: float = 30.0,
     min_duration: float = 5.0,
+    max_duration: float = 30.0,
 ) -> Storyboard:
     """Steps 1-2: Transcribe and build storyboard (no generation yet).
 
     Returns a Storyboard with scenes that need prompts filled in.
-    Scenes are merged to target 10-15s clips (configurable), max 30s.
+    Scenes are cut at natural transitions (segment type changes, gaps).
+    Min/max are guardrails — the song determines clip length.
     """
     # Get audio duration
     result = subprocess.run(
@@ -368,9 +370,8 @@ def plan(
     scenes = segments_to_scenes(segments, duration)
     scenes = merge_short_scenes(
         scenes,
-        target_duration=target_duration,
-        max_duration=max_duration,
         min_duration=min_duration,
+        max_duration=max_duration,
     )
 
     return Storyboard(
