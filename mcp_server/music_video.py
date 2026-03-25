@@ -535,83 +535,109 @@ def _suggest_elements(text: str, title: str) -> list:
 
     # WHO — look for character references
     who_patterns = {
-        "narrator": ["i ", "i'm ", "my ", "me ", "i've "],
-        "police": ["police", "cops", "officer", "sheriff", "deputy", "swat"],
-        "crowd": ["crowd", "people", "audience", "fans", "everybody"],
-        "lover": ["baby", "girl", "babe", "honey", "darling"],
-        "antagonist": ["they ", "them ", "enemy", "hater"],
+        "narrator": (["i ", "i'm ", "my ", "me ", "i've "],
+                     "The main character and narrator, medium close-up, face clearly visible, expressive"),
+        "police": (["police", "cops", "officer", "sheriff", "deputy", "swat"],
+                   "Law enforcement officers in uniform, tactical gear, badges visible, authoritative stance"),
+        "crowd": (["crowd", "people", "audience", "fans", "everybody"],
+                  "Group of onlookers or fans, diverse, reactive expressions, background crowd"),
+        "lover": (["baby", "girl", "babe", "honey", "darling"],
+                  "Romantic interest, attractive, warm expression, intimate framing"),
+        "antagonist": (["they ", "them ", "enemy", "hater"],
+                       "Opposing figure, threatening or dismissive demeanor, dramatic lighting"),
     }
-    for char_id, keywords in who_patterns.items():
+    for char_id, (keywords, desc) in who_patterns.items():
         if any(kw in text for kw in keywords):
             elements.append(WorldElement(
                 id=char_id, category="who",
                 name=char_id.title(),
-                description=f"Character suggested from lyrics — needs visual description",
+                description=desc,
             ))
 
     # WHERE — locations
     where_patterns = {
-        "street": ["street", "road", "sidewalk", "block", "hood", "neighborhood"],
-        "house": ["house", "home", "door", "room", "kitchen", "bedroom", "crib"],
-        "court": ["court", "judge", "trial", "jury", "gavel"],
-        "stage": ["stage", "mic", "concert", "perform", "show"],
-        "club": ["club", "bar", "party", "dance floor"],
-        "car": ["car", "ride", "driving", "whip", "trunk"],
-        "jail": ["jail", "prison", "cell", "locked up", "behind bars"],
+        "street": (["street", "road", "sidewalk", "block", "hood", "neighborhood"],
+                   "Urban street scene, sidewalks, buildings, streetlights, wide establishing shot"),
+        "house": (["house", "home", "door", "room", "kitchen", "bedroom", "crib"],
+                  "Residential house exterior and interior, front door, porch, lived-in rooms"),
+        "court": (["court", "judge", "trial", "jury", "gavel"],
+                  "Courtroom interior, judge's bench, witness stand, jury box, wood paneling, American flag"),
+        "stage": (["stage", "mic", "concert", "perform", "show"],
+                  "Performance stage with microphone, spotlights, smoke, crowd visible in background"),
+        "club": (["club", "bar", "party", "dance floor"],
+                 "Nightclub interior, neon lights, dance floor, bar, dim moody lighting"),
+        "car": (["car", "ride", "driving", "whip", "trunk"],
+                "Vehicle interior or exterior, dashboard, steering wheel, road visible"),
+        "jail": (["jail", "prison", "cell", "locked up", "behind bars"],
+                 "Jail cell or prison corridor, bars, concrete walls, harsh fluorescent lighting"),
     }
-    for loc_id, keywords in where_patterns.items():
+    for loc_id, (keywords, desc) in where_patterns.items():
         if any(kw in text for kw in keywords):
             elements.append(WorldElement(
                 id=loc_id, category="where",
                 name=loc_id.title(),
-                description=f"Location suggested from lyrics — needs visual description",
+                description=desc,
             ))
 
     # WHEN — time/atmosphere
     when_patterns = {
-        "night": ["night", "dark", "midnight", "moonlight", "after dark"],
-        "day": ["sun", "morning", "daylight", "bright", "noon"],
-        "golden-hour": ["sunset", "sunrise", "golden", "dusk", "dawn"],
+        "night": (["night", "dark", "midnight", "moonlight", "after dark"],
+                  "Nighttime atmosphere, dark sky, artificial lighting, shadows, moody"),
+        "day": (["sun", "morning", "daylight", "bright", "noon"],
+                "Daytime, natural sunlight, clear sky, bright and open"),
+        "golden-hour": (["sunset", "sunrise", "golden", "dusk", "dawn"],
+                        "Golden hour light, warm orange tones, long shadows, cinematic warmth"),
     }
-    for time_id, keywords in when_patterns.items():
+    for time_id, (keywords, desc) in when_patterns.items():
         if any(kw in text for kw in keywords):
             elements.append(WorldElement(
                 id=time_id, category="when",
                 name=time_id.replace("-", " ").title(),
-                description=f"Time/atmosphere suggested from lyrics — needs visual description",
+                description=desc,
             ))
 
     # WHAT — key objects/actions
     what_patterns = {
-        "money": ["money", "cash", "dollar", "bucks", "bread", "paid"],
-        "gun": ["gun", "rifle", "weapon", "shoot", "trigger"],
-        "phone": ["phone", "call", "text", "screen"],
-        "music": ["guitar", "mic", "beat", "song", "music", "rap", "sing"],
-        "camera": ["camera", "film", "record", "footage", "surveillance"],
-        "drugs": ["smoke", "weed", "high", "blunt", "joint"],
+        "money": (["money", "cash", "dollar", "bucks", "bread", "paid"],
+                  "Cash money, bills spread out, close-up detail, dramatic lighting"),
+        "gun": (["gun", "rifle", "weapon", "shoot", "trigger"],
+                "Firearms, tactical weapons, dramatic angle, tension"),
+        "phone": (["phone", "call", "text", "screen"],
+                  "Smartphone screen, notifications, close-up on display"),
+        "music": (["guitar", "mic", "beat", "song", "music", "rap", "sing"],
+                  "Musical instruments, microphone, recording equipment, performance energy"),
+        "camera": (["camera", "film", "record", "footage", "surveillance"],
+                   "Surveillance cameras, security footage aesthetic, lens detail"),
+        "drugs": (["smoke", "weed", "high", "blunt", "joint"],
+                  "Smoke drifting through air, hazy atmosphere, close-up detail"),
     }
-    for obj_id, keywords in what_patterns.items():
+    for obj_id, (keywords, desc) in what_patterns.items():
         if any(kw in text for kw in keywords):
             elements.append(WorldElement(
                 id=obj_id, category="what",
                 name=obj_id.title(),
-                description=f"Object/action suggested from lyrics — needs visual description",
+                description=desc,
             ))
 
-    # WHY — mood/emotion (always suggest at least one)
+    # WHY — mood/emotion
     why_patterns = {
-        "defiance": ["fight", "stand", "defy", "resist", "never", "won't"],
-        "triumph": ["win", "victory", "champion", "ruling", "case closed"],
-        "anger": ["angry", "mad", "rage", "furious", "hate"],
-        "joy": ["happy", "love", "celebrate", "party", "good"],
-        "pain": ["hurt", "cry", "tears", "pain", "broken"],
+        "defiance": (["fight", "stand", "defy", "resist", "never", "won't"],
+                     "Defiant energy, standing ground, unwavering confidence, bold composition"),
+        "triumph": (["win", "victory", "champion", "ruling", "case closed"],
+                    "Triumphant celebration, arms raised, victorious, golden light, uplifting"),
+        "anger": (["angry", "mad", "rage", "furious", "hate"],
+                  "Intense anger, clenched fists, harsh lighting, red tones, aggressive energy"),
+        "joy": (["happy", "love", "celebrate", "party", "good"],
+                "Pure joy, smiles, warm light, vibrant colors, celebratory"),
+        "pain": (["hurt", "cry", "tears", "pain", "broken"],
+                 "Emotional pain, vulnerability, muted colors, soft focus, introspective"),
     }
-    for mood_id, keywords in why_patterns.items():
+    for mood_id, (keywords, desc) in why_patterns.items():
         if any(kw in text for kw in keywords):
             elements.append(WorldElement(
                 id=mood_id, category="why",
                 name=mood_id.title(),
-                description=f"Mood/emotion suggested from lyrics — needs visual description",
+                description=desc,
             ))
 
     return elements

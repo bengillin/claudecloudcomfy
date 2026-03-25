@@ -181,12 +181,25 @@
 
   <!-- Step 1: World Building -->
   <div x-show="mvStep===1" class="space-y-3">
-    <h2 class="font-medium">World Elements</h2>
+    <div class="bg-gray-800/50 rounded-lg p-3 border border-gray-700 text-xs text-gray-400 space-y-1">
+      <p class="font-medium text-gray-300">Build your visual world</p>
+      <p>These elements were auto-detected from the lyrics. Edit descriptions to match your vision, upload reference photos, or generate visual references. Everything here gets used when creating scene images.</p>
+    </div>
+
+    <div class="flex gap-2 mb-2">
+      <button @click="mvGenAllElements()" :disabled="mvLoading" class="flex-1 bg-blue-600 hover:bg-blue-500 py-1.5 rounded-lg text-xs disabled:opacity-50">
+        <span x-text="mvLoading ? 'Generating...' : 'Generate All References'"></span>
+      </button>
+    </div>
+
     <div class="grid gap-2">
       <template x-for="cat in ['who','where','when','what','why']" :key="cat">
-        <div class="bg-gray-900 rounded-lg p-3 border border-gray-800">
+        <div class="bg-gray-900 rounded-lg p-3 border border-gray-800" x-show="mvElements.some(e => e.category === cat) || mvAddingElement === cat">
           <div class="flex items-center justify-between mb-2">
-            <span class="text-xs font-bold uppercase text-gray-400" x-text="cat"></span>
+            <div>
+              <span class="text-xs font-bold uppercase" :class="{'text-blue-400': cat==='who', 'text-green-400': cat==='where', 'text-yellow-400': cat==='when', 'text-purple-400': cat==='what', 'text-pink-400': cat==='why'}" x-text="cat"></span>
+              <span class="text-xs text-gray-600 ml-2" x-text="{'who':'Characters & subjects','where':'Locations & settings','when':'Time & atmosphere','what':'Objects & actions','why':'Mood & emotion'}[cat]"></span>
+            </div>
             <button @click="mvAddingElement=cat" class="text-xs bg-gray-800 px-2 py-1 rounded hover:bg-gray-700">+ Add</button>
           </div>
           <template x-for="el in mvElements.filter(e => e.category === cat)" :key="el.id">
@@ -202,11 +215,13 @@
                   <button @click="mvGenElement(el.id)" class="text-xs text-blue-400 hover:text-blue-300">Generate</button>
                 </div>
               </div>
-              <p class="text-xs text-gray-600 mt-0.5 line-clamp-1" x-text="el.description"></p>
+              <!-- Editable description -->
+              <textarea x-model="el.description" @change="mvUpdateElement(el.id, el.description)" rows="2"
+                        class="w-full bg-gray-950 border border-gray-800 rounded p-1.5 text-xs text-gray-400 resize-none mt-1 focus:border-gray-600 focus:text-gray-200"></textarea>
               <!-- Reference image thumbnails -->
               <div x-show="el.reference_paths?.length" class="flex gap-1 mt-2 overflow-x-auto">
                 <template x-for="ref in el.reference_paths || []" :key="ref">
-                  <img :src="'/files/' + ref" class="h-16 w-16 rounded object-cover flex-shrink-0">
+                  <img :src="'/files/' + ref" class="h-16 w-16 rounded object-cover flex-shrink-0 cursor-pointer" @click="viewFile({path: ref})">
                 </template>
               </div>
             </div>
@@ -502,6 +517,29 @@ function app() {
         body: JSON.stringify({})
       });
       this.mvLoadElements();
+    },
+
+    async mvGenAllElements() {
+      this.mvLoading = true;
+      for (const el of this.mvElements) {
+        if ((el.reference_images || 0) === 0) {
+          await fetch(`/api/mv/${this.mvProject}/elements/${el.id}/generate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+          });
+        }
+      }
+      await this.mvLoadElements();
+      this.mvLoading = false;
+    },
+
+    async mvUpdateElement(id, description) {
+      await fetch(`/api/mv/${this.mvProject}/elements/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description })
+      });
     },
 
     async mvSavePrompts() {
