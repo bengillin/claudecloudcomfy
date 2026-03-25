@@ -1035,8 +1035,8 @@ def comfy_mv_generate_element(
             "gen", "--preset=z-turbo",
             "--prompt", full_prompt,
             f"--seed={gen_seed}",
-            "--set", f"57:13.width={1280}",
-            "--set", f"57:13.height={720}",
+            "--set", f"57:13.width={sb.width}",
+            "--set", f"57:13.height={sb.height}",
         )
         saved = _find_saved_file(output)
         if saved:
@@ -1138,6 +1138,8 @@ def comfy_mv_plan(
     audio_path: str,
     title: str,
     project_name: str,
+    width: int = 1280,
+    height: int = 720,
     min_duration: float = 5.0,
     max_duration: float = 30.0,
 ) -> str:
@@ -1153,12 +1155,16 @@ def comfy_mv_plan(
         audio_path: Path to the music file (mp3, wav, etc.).
         title: Title of the music video.
         project_name: Name for the project directory (under projects/).
+        width: Video width in pixels (default 1280).
+        height: Video height in pixels (default 720).
         min_duration: Minimum clip length guardrail (default 5s).
         max_duration: Maximum clip length guardrail (default 30s).
     """
     from .music_video import plan, Storyboard
 
     sb = plan(audio_path, title, min_duration, max_duration)
+    sb.width = width
+    sb.height = height
 
     # Save storyboard
     project_dir = PROJECTS_DIR / project_name
@@ -1267,6 +1273,8 @@ def comfy_mv_generate(
     data = json.loads(sb_path.read_text())
     all_scenes = data["scenes"]
     audio_path = data["audio_path"]
+    vid_w = data.get("width", 1280)
+    vid_h = data.get("height", 720)
 
     # Filter to requested scenes
     if scenes is not None:
@@ -1297,8 +1305,8 @@ def comfy_mv_generate(
                 "gen", "--preset=z-turbo",
                 "--prompt", scene["prompt"],
                 f"--seed={scene.get('seed', 42 + scene['id'])}",
-                "--set", f"57:13.width={WIDTH}",
-                "--set", f"57:13.height={HEIGHT}",
+                "--set", f"57:13.width={vid_w}",
+                "--set", f"57:13.height={vid_h}",
             )
             saved = _find_saved_file(output)
             if saved:
@@ -1399,6 +1407,8 @@ def comfy_mv_stitch(
     scenes = data["scenes"]
     audio_path = data["audio_path"]
     title = data.get("title", project_name)
+    vid_w = data.get("width", 1280)
+    vid_h = data.get("height", 720)
 
     if not output_filename:
         safe_title = title.replace(" ", "_").replace("'", "")
@@ -1427,7 +1437,7 @@ def comfy_mv_stitch(
     sp.run([
         "ffmpeg", "-y",
         "-f", "concat", "-safe", "0", "-i", str(concat_file),
-        "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2",
+        "-vf", f"scale={vid_w}:{vid_h}:force_original_aspect_ratio=decrease,pad={vid_w}:{vid_h}:(ow-iw)/2:(oh-ih)/2",
         "-c:v", "libx264", "-preset", "medium", "-crf", "18",
         "-an", str(temp),
     ], capture_output=True)

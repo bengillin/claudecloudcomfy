@@ -161,6 +161,18 @@
       <input type="file" accept="audio/*" @change="mvAudioFile = $event.target.files[0]" class="hidden">
       <span x-text="mvAudioFile ? mvAudioFile.name : 'Drop song here'" class="text-gray-400"></span>
     </label>
+    <div>
+      <h2 class="text-sm font-medium text-gray-400 mb-2">Aspect Ratio</h2>
+      <div class="flex gap-1.5 flex-wrap">
+        <template x-for="ar in aspectRatios" :key="ar.label">
+          <button @click="mvAspectRatio=ar"
+                  :class="mvAspectRatio.label===ar.label ? 'ring-2 ring-blue-500 bg-gray-800' : 'bg-gray-900'"
+                  class="px-3 py-1.5 rounded-lg text-xs border border-gray-800 hover:border-gray-600">
+            <span x-text="ar.label"></span>
+          </button>
+        </template>
+      </div>
+    </div>
     <button @click="mvPlan()" :disabled="!mvProject || !mvAudioFile || mvLoading"
             class="w-full bg-blue-600 hover:bg-blue-500 py-2 rounded-lg font-medium text-sm disabled:opacity-50">
       <span x-text="mvLoading ? 'Transcribing...' : 'Plan Video'"></span>
@@ -328,6 +340,7 @@ function app() {
     mvProject: '',
     mvTitle: '',
     mvAudioFile: null,
+    mvAspectRatio: { label: '16:9', w: 1280, h: 720 },
     mvScenes: [],
     mvElements: [],
     mvAddingElement: null,
@@ -420,6 +433,8 @@ function app() {
       const fd = new FormData();
       fd.append('file', this.mvAudioFile);
       fd.append('title', this.mvTitle || this.mvProject);
+      fd.append('width', this.mvAspectRatio.w);
+      fd.append('height', this.mvAspectRatio.h);
       const res = await fetch(`/api/mv/${this.mvProject}/plan`, { method: 'POST', body: fd }).then(r => r.json());
       this.mvScenes = res.scenes || [];
       this.mvLoading = false;

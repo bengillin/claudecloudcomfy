@@ -7,10 +7,10 @@ import whisper
 from pathlib import Path
 from dataclasses import dataclass, field, asdict
 
-# Target aspect ratio for all images and video (matches LTX 2.3 output)
-VIDEO_WIDTH = 1280
-VIDEO_HEIGHT = 720
-VIDEO_FPS = 25
+# Defaults — overridable per project via storyboard
+DEFAULT_WIDTH = 1280
+DEFAULT_HEIGHT = 720
+DEFAULT_FPS = 25
 
 
 @dataclass
@@ -78,6 +78,8 @@ class Storyboard:
     scenes: list[Scene] = field(default_factory=list)
     elements: list[WorldElement] = field(default_factory=list)
     brief: CreativeBrief = field(default_factory=CreativeBrief)
+    width: int = DEFAULT_WIDTH
+    height: int = DEFAULT_HEIGHT
     camera_style: str = ""
     global_style: str = ""
 
@@ -299,6 +301,8 @@ def stitch_video(
     scenes: list[Scene],
     audio_path: str,
     output_path: Path,
+    width: int = DEFAULT_WIDTH,
+    height: int = DEFAULT_HEIGHT,
     crossfade: float = 0.0,
 ) -> Path:
     """Concatenate video clips and overlay original audio track.
@@ -330,7 +334,7 @@ def stitch_video(
             filter_parts = []
             # Scale all inputs to target resolution
             for i in range(n):
-                filter_parts.append(f"[{i}:v]scale={VIDEO_WIDTH}:{VIDEO_HEIGHT},setsar=1[v{i}]")
+                filter_parts.append(f"[{i}:v]scale={width}:{height},setsar=1[v{i}]")
 
             # Chain xfade filters
             prev = "[v0]"
@@ -365,7 +369,7 @@ def stitch_video(
         "ffmpeg", "-y",
         "-f", "concat", "-safe", "0", "-i", str(concat_file),
         "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-        "-vf", f"scale={VIDEO_WIDTH}:{VIDEO_HEIGHT}:force_original_aspect_ratio=decrease,pad={VIDEO_WIDTH}:{VIDEO_HEIGHT}:(ow-iw)/2:(oh-ih)/2",
+        "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2",
         "-an",
         str(temp_video),
     ], capture_output=True)
