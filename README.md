@@ -69,16 +69,18 @@ Claude will use `comfy_submit` to fire off all 4 jobs simultaneously, then colle
 ```
 
 Claude will:
-1. **World build** — establish characters, locations, props, mood (5W framework: who/what/when/where/why)
-2. **Generate references** — create and approve visual references for each element (from user photos or generated)
-3. **Transcribe** the song with Whisper → build a timed storyboard
-4. **Plan scenes** — Claude decides cut points based on lyrics and musical moments, assigns elements per scene
-5. **Generate scene images** from approved references (qwen-edit, z-turbo, multi-angles)
+1. **Transcribe** the song with Whisper → lyrics with timestamps
+2. **Creative brief** — Claude analyzes the full song: narrative arc, mood, visual style, color palette. Proposes characters, locations, props, and moods as 5W elements (who/what/when/where/why)
+3. **World build** — user uploads reference images for elements they have visuals for, approves Claude's suggestions for the rest. Claude generates references from source images (qwen-edit) or from scratch (z-turbo), plus multi-angle character sheets
+4. **Plan scenes** — Claude decides cut points based on lyrics and musical moments, assigns approved elements per scene, writes visual + motion prompts
+5. **Generate scene images** from approved references → consistent characters across scenes
 6. **Animate** with audio-conditioned lip sync (LTX 2.3 a2v) — characters rap to the actual track
 7. **Stitch** all clips + overlay the original audio
 8. **Refine** — view output, tweak prompts, regenerate specific scenes, re-stitch
 
-Characters maintain visual consistency across scenes through approved reference images. The `ltx23-a2v` preset encodes real audio into the latent space — characters lip-sync to vocals, and motion follows the beat. The storyboard persists as JSON — resume across sessions, retry failed scenes, tweak prompts and regenerate specific clips.
+The creative brief is the shared contract between Claude and the user — Claude proposes the artistic vision, user iterates via CLI or web UI. Characters maintain visual consistency through approved reference images. The `ltx23-a2v` preset encodes real audio into the latent space — characters lip-sync to vocals, and motion follows the beat. The storyboard persists as JSON for resume and refinement across sessions.
+
+Works bidirectionally: Claude Code CLI and the web UI (`uv run python -m mcp_server --web`) both read and write the same storyboard.
 
 ### MCP tools
 
@@ -102,11 +104,13 @@ Characters maintain visual consistency across scenes through approved reference 
 | `comfy_project_list` | List all projects |
 | `comfy_project_log` | Log a generation step |
 | `comfy_project_status` | Get full project state |
+| `comfy_mv_plan` | Transcribe song + build timed storyboard |
+| `comfy_mv_set_brief` | Set creative brief — narrative, mood, style, suggested elements |
+| `comfy_mv_get_brief` | Get brief + transcript + element/scene status |
 | `comfy_mv_add_element` | Add a world element (character, location, prop, mood) |
 | `comfy_mv_generate_element` | Generate reference images for an element |
 | `comfy_mv_list_elements` | List elements with reference image status |
 | `comfy_mv_update_element` | Refine element description or remove bad references |
-| `comfy_mv_plan` | Transcribe song + build timed storyboard |
 | `comfy_mv_set_prompts` | Set visual/motion prompts per scene |
 | `comfy_mv_generate` | Generate images, split audio, create video clips |
 | `comfy_mv_stitch` | Concatenate clips + overlay original audio |
@@ -242,7 +246,7 @@ Export any workflow from ComfyUI Cloud as API-format JSON, then:
 | File/Dir | Description |
 |----------|-------------|
 | `comfy.sh` | CLI — every API endpoint + gen, animate, batch, presets, monitoring |
-| `mcp_server/server.py` | FastMCP server — 27 tools, 2 resources, 2 prompts |
+| `mcp_server/server.py` | FastMCP server — 29 tools, 2 resources, 2 prompts |
 | `mcp_server/config.py` | Path resolution + .env loading for MCP server |
 | `.mcp.json` | Claude Code auto-connection config |
 | `mcp_server/music_video.py` | Music video pipeline — transcription, scene planning, stitching |
