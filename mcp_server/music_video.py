@@ -165,29 +165,69 @@ def split_audio(audio_path: str, scenes: list[Scene], output_dir: Path) -> list[
 # ── Step 4: Merge adjacent short scenes ─────────────────────────────────
 
 
-def merge_short_scenes(scenes: list[Scene], min_duration: float = 3.0) -> list[Scene]:
-    """Merge scenes shorter than min_duration with their neighbors.
+def merge_short_scenes(
+    scenes: list[Scene],
+    target_duration: float = 12.0,
+    max_duration: float = 30.0,
+    min_duration: float = 5.0,
+) -> list[Scene]:
+    """Merge transcript segments into clip-sized scenes for video generation.
 
-    LTX 2.3 needs enough audio to generate meaningful motion.
-    Merges short scenes into the previous scene, combining their text.
+    Groups adjacent segments into 10-15s clips by default. Respects segment
+    type boundaries (won't merge a verse into a chorus). Allows up to 30s
+    for sustained moments.
+
+    Args:
+        scenes: Raw transcript segments.
+        target_duration: Ideal clip length in seconds (default 12s).
+        max_duration: Maximum clip length (default 30s).
+        min_duration: Minimum clip length — keep merging until at least this (default 5s).
     """
     if not scenes:
         return scenes
 
-    merged = [scenes[0]]
+    merged = [Scene(
+        id=0,
+        start=scenes[0].start,
+        end=scenes[0].end,
+        text=scenes[0].text,
+        segment_type=scenes[0].segment_type,
+    )]
+
     for scene in scenes[1:]:
         prev = merged[-1]
-        if prev.duration < min_duration:
-            # Extend previous scene to absorb this one
+        combined_duration = scene.end - prev.start
+        same_type = (
+            scene.segment_type == prev.segment_type
+            or prev.segment_type == "instrumental"
+            or scene.segment_type == "instrumental"
+        )
+
+        # Merge if:
+        # 1. Previous scene is below minimum duration, OR
+        # 2. Combined would be under target and same segment type, OR
+        # 3. Previous scene is under target and combined won't exceed max
+        should_merge = (
+            (prev.duration < min_duration)
+            or (combined_duration <= target_duration and same_type)
+            or (prev.duration < target_duration and combined_duration <= max_duration and same_type)
+        )
+
+        if should_merge:
             prev.end = scene.end
             if scene.text:
                 prev.text = f"{prev.text} {scene.text}".strip()
-            # Keep the more specific segment type
             if prev.segment_type == "instrumental" and scene.segment_type != "instrumental":
                 prev.segment_type = scene.segment_type
         else:
             scene.id = len(merged)
-            merged.append(scene)
+            merged.append(Scene(
+                id=scene.id,
+                start=scene.start,
+                end=scene.end,
+                text=scene.text,
+                segment_type=scene.segment_type,
+            ))
 
     # Handle last scene being too short
     if len(merged) > 1 and merged[-1].duration < min_duration:
@@ -301,10 +341,17 @@ def stitch_video(
 # ── Full pipeline ───────────────────────────────────────────────────────
 
 
-def plan(audio_path: str, title: str, min_scene_duration: float = 3.0) -> Storyboard:
+def plan(
+    audio_path: str,
+    title: str,
+    target_duration: float = 12.0,
+    max_duration: float = 30.0,
+    min_duration: float = 5.0,
+) -> Storyboard:
     """Steps 1-2: Transcribe and build storyboard (no generation yet).
 
     Returns a Storyboard with scenes that need prompts filled in.
+    Scenes are merged to target 10-15s clips (configurable), max 30s.
     """
     # Get audio duration
     result = subprocess.run(
@@ -319,7 +366,12 @@ def plan(audio_path: str, title: str, min_scene_duration: float = 3.0) -> Storyb
 
     # Build scenes
     scenes = segments_to_scenes(segments, duration)
-    scenes = merge_short_scenes(scenes, min_duration=min_scene_duration)
+    scenes = merge_short_scenes(
+        scenes,
+        target_duration=target_duration,
+        max_duration=max_duration,
+        min_duration=min_duration,
+    )
 
     return Storyboard(
         title=title,

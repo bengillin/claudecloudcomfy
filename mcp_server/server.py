@@ -724,12 +724,15 @@ def comfy_mv_plan(
     audio_path: str,
     title: str,
     project_name: str,
-    min_scene_duration: float = 3.0,
+    target_duration: float = 12.0,
+    max_duration: float = 30.0,
+    min_duration: float = 5.0,
 ) -> str:
     """Transcribe a song and build a music video storyboard with timed scenes.
 
-    Uses Whisper to transcribe the audio, then creates scenes from transcript
-    segments. Returns the storyboard with scenes that need visual/motion prompts.
+    Uses Whisper to transcribe the audio, then merges transcript segments
+    into clip-sized scenes. Default clip length is ~12s (sweet spot for
+    LTX a2v lip sync), max 30s for sustained moments.
 
     After calling this, review the scenes and set prompts with comfy_mv_set_prompts.
 
@@ -737,11 +740,13 @@ def comfy_mv_plan(
         audio_path: Path to the music file (mp3, wav, etc.).
         title: Title of the music video.
         project_name: Name for the project directory (under projects/).
-        min_scene_duration: Minimum scene length in seconds (shorter ones get merged).
+        target_duration: Ideal clip length in seconds (default 12s).
+        max_duration: Maximum clip length in seconds (default 30s).
+        min_duration: Minimum clip length in seconds (default 5s).
     """
     from .music_video import plan, Storyboard
 
-    sb = plan(audio_path, title, min_scene_duration)
+    sb = plan(audio_path, title, target_duration, max_duration, min_duration)
 
     # Save storyboard
     project_dir = PROJECTS_DIR / project_name
