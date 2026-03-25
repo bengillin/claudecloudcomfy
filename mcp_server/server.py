@@ -921,17 +921,14 @@ def comfy_mv_generate(
                 continue
 
             duration = scene["end"] - scene["start"]
-            frame_count = max(49, int(duration * 25))
-            if frame_count % 2 == 0:
-                frame_count += 1
 
             output = _run_comfy(
                 "go", "presets/ltx23-a2v_workflow.json",
                 "--set", f"269.image={img_remote}",
-                "--set", f"270.audio={audio_remote}",
-                "--set", f"267:266.value={scene.get('motion_prompt', 'cinematic motion')}",
-                "--set", f"267:225.value={frame_count}",
-                "--set", f"267:216.noise_seed={scene.get('seed', 42 + scene['id'])}",
+                "--set", f"276.audio={audio_remote}",
+                "--set", f"340:319.value={scene.get('motion_prompt', 'cinematic motion')}",
+                "--set", f"340:331.value={duration}",
+                "--set", f"340:285.noise_seed={scene.get('seed', 42 + scene['id'])}",
                 timeout=300,
             )
             saved = _find_saved_file(output)

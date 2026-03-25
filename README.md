@@ -77,7 +77,7 @@ Claude will:
 6. Stitch all clips + overlay the original audio track
 7. Review, refine individual scenes, and re-stitch
 
-The storyboard persists as JSON — resume across sessions, retry failed scenes, tweak prompts and regenerate specific clips.
+The `ltx23-a2v` preset encodes real audio into the latent space — characters lip-sync to vocals, and motion follows the beat. The storyboard persists as JSON — resume across sessions, retry failed scenes, tweak prompts and regenerate specific clips.
 
 ### MCP tools
 
@@ -141,7 +141,7 @@ All presets use official, tested ComfyUI Cloud workflows with 100% open models. 
 | `z-turbo` | txt2img | Z-Image Turbo | ~15s | png | 1024x1024, 8 steps |
 | `wan22-i2v` | img2vid | Wan 2.2 14B dual-model | ~30s | mp4 | 640x640, 4-step LoRA |
 | `ltx23-i2v` | img2vid + audio | LTX 2.3 22B | ~60s | mp4 | 720p 25fps, dual-pass upscale |
-| `ltx23-a2v` | img + audio → vid | LTX 2.3 22B | ~45s | mp4 | Audio-conditioned, motion synced to music |
+| `ltx23-a2v` | img + audio → vid | LTX 2.3 22B | ~45s | mp4 | Audio-conditioned lip sync, motion synced to music |
 | `qwen-edit` | image edit | Qwen Edit 2509 | ~20s | png | Instruction-based, 4 steps |
 | `multi-angles` | 8-angle rerender | Qwen Edit + angle LoRA | ~45s | png | 8 camera angles from 1 photo |
 
