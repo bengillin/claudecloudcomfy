@@ -1,6 +1,6 @@
 # claudecloudcomfy
 
-A command-line toolkit for the [Comfy Cloud API](https://docs.comfy.org/development/cloud/overview). Run ComfyUI workflows on cloud infrastructure from your terminal — 5 verified presets built from official ComfyUI Cloud workflows.
+A creative agent toolkit for [Comfy Cloud](https://docs.comfy.org/development/cloud/overview). Run ComfyUI workflows from your terminal with a battle-tested bash CLI, or let Claude autonomously plan and execute multi-step creative pipelines via MCP.
 
 ## Setup
 
@@ -12,24 +12,90 @@ A command-line toolkit for the [Comfy Cloud API](https://docs.comfy.org/developm
    # paste your API key into .env
    ```
 
-3. Test:
+3. Install Python dependencies (for MCP server):
+   ```bash
+   brew install uv  # if you don't have uv
+   uv sync
+   ```
+
+4. Test:
    ```bash
    ./comfy.sh user
    ```
 
-## Quick start
+## Creative agent (MCP)
+
+The MCP server turns Claude into a creative agent that can plan, generate, evaluate, and iterate autonomously. When running Claude Code in this directory, the server auto-connects.
+
+```
+User → Claude Code → MCP Server (Python) → comfy.sh → Comfy Cloud API
+                ↑                                           ↓
+                └──── vision evaluation ←── downloaded outputs
+```
+
+**Try it:**
+
+```
+> "Create a promo image for my app — basketball card with neon holographic effect, floating in space"
+```
+
+Claude will:
+1. Read presets → pick `z-turbo`
+2. Read z-turbo's prompt guide → craft an optimized prompt
+3. Call `comfy_generate` → get image
+4. View the image → evaluate quality
+5. If good: return it. If not: retry with adjusted prompt/seed
+
+**Multi-step projects:**
+
+```
+> "Start a marketing project. I need a hero image, 3 angle variations, and an animated version."
+```
+
+Claude will create a project, generate and evaluate each step, and log everything for continuity across sessions.
+
+### MCP tools
+
+| Tool | Description |
+|------|-------------|
+| `comfy_generate` | Generate image from preset + prompt |
+| `comfy_animate` | Image → video with img2vid preset |
+| `comfy_batch_seed` | Sweep seeds for variations |
+| `comfy_list_presets` | Discover presets with capabilities |
+| `comfy_upload_image` | Upload image to Comfy Cloud |
+| `comfy_asset_search` | Search uploaded assets |
+| `comfy_job_list` | List recent jobs with status filter |
+| `comfy_job_status` | Check job status |
+| `comfy_job_wait` | Poll job until done + download |
+| `comfy_cancel_jobs` | Cancel pending jobs |
+| `comfy_download` | Download output file by name |
+| `comfy_run_workflow` | Run arbitrary workflow with overrides |
+| `comfy_list_outputs` | List recent downloads |
+| `comfy_project_create` | Start a creative project |
+| `comfy_project_list` | List all projects |
+| `comfy_project_log` | Log a generation step |
+| `comfy_project_status` | Get full project state |
+
+### MCP resources & prompts
+
+- `comfy://presets` — all preset metadata (prompt guides, capabilities, output formats)
+- `comfy://presets/{name}` — single preset detail
+- `creative_brief` prompt — guides Claude to plan a multi-step pipeline
+- `evaluate_generation` prompt — structures visual quality evaluation
+
+## CLI quick start
 
 ```bash
-# Generate an image instantly (~7s)
+# Generate an image instantly (~15s)
 ./comfy.sh gen --preset=z-turbo --prompt "cyberpunk portrait, neon lighting" --open
 
 # Animate a photo into video (~30s)
 ./comfy.sh animate photo.jpg --preset=wan22-i2v --prompt "the scene comes to life" --open
 
-# Edit an image with instructions (~10s)
+# Edit an image with instructions (~20s)
 ./comfy.sh animate photo.jpg --preset=qwen-edit --prompt "Replace the background with a beach sunset" --open
 
-# 8 camera angles from one photo (~65s)
+# 8 camera angles from one photo (~45s)
 ./comfy.sh animate portrait.jpg --preset=multi-angles --open
 ```
 
@@ -39,13 +105,15 @@ All outputs auto-download to `./downloads/`. Add `--open` to view immediately.
 
 All presets use official, tested ComfyUI Cloud workflows with 100% open models. Every preset listed here has been verified end-to-end.
 
-| Preset | Type | Model | Time | Notes |
-|--------|------|-------|------|-------|
-| `z-turbo` | txt2img | Z-Image Turbo | ~7s | 1024x1024, 8 steps |
-| `wan22-i2v` | img2vid | Wan 2.2 14B dual-model | ~30s | 640x640, 4-step LoRA |
-| `ltx23-i2v` | img2vid + audio | LTX 2.3 22B | ~35s | 1280x720, dual-pass upscale |
-| `qwen-edit` | image edit | Qwen Edit 2509 | ~10s | Instruction-based, 4 steps |
-| `multi-angles` | 8-angle rerender | Qwen Edit + angle LoRA | ~65s | 8 camera angles from 1 photo |
+| Preset | Type | Model | Time | Output | Notes |
+|--------|------|-------|------|--------|-------|
+| `z-turbo` | txt2img | Z-Image Turbo | ~15s | png | 1024x1024, 8 steps |
+| `wan22-i2v` | img2vid | Wan 2.2 14B dual-model | ~30s | mp4 | 640x640, 4-step LoRA |
+| `ltx23-i2v` | img2vid + audio | LTX 2.3 22B | ~60s | mp4 | 720p 25fps, dual-pass upscale |
+| `qwen-edit` | image edit | Qwen Edit 2509 | ~20s | png | Instruction-based, 4 steps |
+| `multi-angles` | 8-angle rerender | Qwen Edit + angle LoRA | ~45s | png | 8 camera angles from 1 photo |
+
+Each preset includes a `prompt_guide` with model-specific guidance — the MCP server exposes these via `comfy://presets/{name}` so Claude reads them before crafting prompts.
 
 ## Usage
 
@@ -137,8 +205,12 @@ Export any workflow from ComfyUI Cloud as API-format JSON, then:
 | File/Dir | Description |
 |----------|-------------|
 | `comfy.sh` | CLI — every API endpoint + gen, animate, batch, presets, monitoring |
+| `mcp_server/server.py` | FastMCP server — 17 tools, 2 resources, 2 prompts |
+| `mcp_server/config.py` | Path resolution + .env loading for MCP server |
+| `pyproject.toml` | Python project config (uv, mcp dependency) |
 | `workflows/` | 5 official ComfyUI Cloud workflow JSONs (all verified) |
-| `presets/` | Saved preset configs (created locally via `preset-save`) |
+| `presets/` | Preset configs with prompt guides and capabilities |
+| `projects/` | Creative project tracking (created by MCP tools) |
 | `downloads/` | Generated outputs land here |
 | `REFERENCE.md` | Full API endpoint reference |
 | `openapi-cloud.yaml` | Official OpenAPI 3.0.3 spec (3,700+ lines) |
@@ -147,6 +219,7 @@ Export any workflow from ComfyUI Cloud as API-format JSON, then:
 ## Requirements
 
 - bash, curl, python3
+- [uv](https://docs.astral.sh/uv/) (for MCP server Python dependencies)
 - A [Comfy Cloud](https://www.comfy.org/cloud/pricing) subscription
 - Optional: [wscat](https://github.com/websockets/wscat) or [websocat](https://github.com/vi/websocat) for WebSocket monitoring
 
