@@ -715,6 +715,390 @@ def comfy_project_status(name: str) -> str:
     return pfile.read_text()
 
 
+# ── MCP Tools: Music Video ───────────────────────────────────────────────
+
+
+@mcp.tool()
+@_handle_errors
+def comfy_mv_plan(
+    audio_path: str,
+    title: str,
+    project_name: str,
+    min_scene_duration: float = 3.0,
+) -> str:
+    """Transcribe a song and build a music video storyboard with timed scenes.
+
+    Uses Whisper to transcribe the audio, then creates scenes from transcript
+    segments. Returns the storyboard with scenes that need visual/motion prompts.
+
+    After calling this, review the scenes and set prompts with comfy_mv_set_prompts.
+
+    Args:
+        audio_path: Path to the music file (mp3, wav, etc.).
+        title: Title of the music video.
+        project_name: Name for the project directory (under projects/).
+        min_scene_duration: Minimum scene length in seconds (shorter ones get merged).
+    """
+    from .music_video import plan, Storyboard
+
+    sb = plan(audio_path, title, min_scene_duration)
+
+    # Save storyboard
+    project_dir = PROJECTS_DIR / project_name
+    project_dir.mkdir(parents=True, exist_ok=True)
+    for subdir in ["scenes", "segments", "clips"]:
+        (project_dir / subdir).mkdir(exist_ok=True)
+
+    sb_path = project_dir / "storyboard.json"
+    sb.save(sb_path)
+
+    # Summary
+    scenes_summary = []
+    for s in sb.scenes:
+        scenes_summary.append({
+            "id": s.id,
+            "start": round(s.start, 1),
+            "end": round(s.end, 1),
+            "duration": round(s.duration, 1),
+            "text": s.text[:80],
+            "segment_type": s.segment_type,
+        })
+
+    return json.dumps({
+        "status": "planned",
+        "project": str(project_dir),
+        "storyboard": str(sb_path),
+        "duration": round(sb.duration, 1),
+        "scene_count": len(sb.scenes),
+        "scenes": scenes_summary,
+    }, indent=2)
+
+
+@mcp.tool()
+def comfy_mv_set_prompts(
+    project_name: str,
+    scene_prompts: list[dict],
+) -> str:
+    """Set visual and motion prompts for scenes in a music video storyboard.
+
+    Each entry in scene_prompts should have:
+      - id: scene ID number
+      - prompt: visual description for the start frame image
+      - motion_prompt: camera/motion description for animation
+      - seed: (optional) specific seed for reproducibility
+
+    You can also set world_elements and camera_style on the storyboard.
+
+    Args:
+        project_name: Project directory name.
+        scene_prompts: List of {id, prompt, motion_prompt, seed?} dicts.
+    """
+    sb_path = PROJECTS_DIR / project_name / "storyboard.json"
+    if not sb_path.exists():
+        return json.dumps({"error": f"Project '{project_name}' not found"})
+
+    data = json.loads(sb_path.read_text())
+    scenes_by_id = {s["id"]: s for s in data["scenes"]}
+
+    updated = 0
+    for sp in scene_prompts:
+        sid = sp.get("id")
+        if sid is not None and sid in scenes_by_id:
+            scene = scenes_by_id[sid]
+            if "prompt" in sp:
+                scene["prompt"] = sp["prompt"]
+            if "motion_prompt" in sp:
+                scene["motion_prompt"] = sp["motion_prompt"]
+            if "seed" in sp:
+                scene["seed"] = sp["seed"]
+            updated += 1
+
+    sb_path.write_text(json.dumps(data, indent=2))
+    return json.dumps({"status": "updated", "scenes_updated": updated})
+
+
+@mcp.tool()
+@_handle_errors
+def comfy_mv_generate(
+    project_name: str,
+    scenes: list[int] | None = None,
+    step: str | None = None,
+) -> str:
+    """Generate music video assets — scene images, audio segments, and video clips.
+
+    Runs the full pipeline or specific steps. Skips already-completed work
+    (resume-safe). Use 'scenes' to regenerate specific scenes only.
+
+    Args:
+        project_name: Project directory name.
+        scenes: Optional list of scene IDs to generate. None = all scenes.
+        step: Optional step to run: "images", "audio", "clips", or None for all.
+    """
+    import shutil
+    project_dir = PROJECTS_DIR / project_name
+    sb_path = project_dir / "storyboard.json"
+    if not sb_path.exists():
+        return json.dumps({"error": f"Project '{project_name}' not found"})
+
+    data = json.loads(sb_path.read_text())
+    all_scenes = data["scenes"]
+    audio_path = data["audio_path"]
+
+    # Filter to requested scenes
+    if scenes is not None:
+        target_scenes = [s for s in all_scenes if s["id"] in scenes]
+        # Clear existing files so they get regenerated
+        for s in target_scenes:
+            for key, subdir in [("image_path", "scenes"), ("audio_path", "segments"), ("video_path", "clips")]:
+                path = project_dir / subdir / f"scene_{s['id']:03d}.{'png' if key == 'image_path' else 'wav' if key == 'audio_path' else 'mp4'}"
+                if path.exists():
+                    path.unlink()
+                s[key] = ""
+    else:
+        target_scenes = all_scenes
+
+    results = {"images": 0, "audio": 0, "clips": 0, "failed": []}
+    WIDTH, HEIGHT = 1280, 720
+
+    # Step: Generate images
+    if step in (None, "images"):
+        for scene in target_scenes:
+            if not scene.get("prompt"):
+                continue
+            img_path = project_dir / "scenes" / f"scene_{scene['id']:03d}.png"
+            if img_path.exists():
+                scene["image_path"] = str(img_path)
+                continue
+            output = _run_comfy(
+                "gen", "--preset=z-turbo",
+                "--prompt", scene["prompt"],
+                f"--seed={scene.get('seed', 42 + scene['id'])}",
+                "--set", f"57:13.width={WIDTH}",
+                "--set", f"57:13.height={HEIGHT}",
+            )
+            saved = _find_saved_file(output)
+            if saved:
+                shutil.copy2(saved, str(img_path))
+                scene["image_path"] = str(img_path)
+                results["images"] += 1
+            else:
+                results["failed"].append({"scene": scene["id"], "step": "image"})
+
+    # Step: Split audio
+    if step in (None, "audio"):
+        import subprocess as sp
+        seg_dir = project_dir / "segments"
+        for scene in target_scenes:
+            seg_path = seg_dir / f"scene_{scene['id']:03d}.wav"
+            if seg_path.exists():
+                scene["audio_path"] = str(seg_path)
+                continue
+            duration = scene["end"] - scene["start"]
+            sp.run([
+                "ffmpeg", "-y", "-i", audio_path,
+                "-ss", str(scene["start"]), "-t", str(duration),
+                "-ar", "44100", "-ac", "1", str(seg_path),
+            ], capture_output=True)
+            scene["audio_path"] = str(seg_path)
+            results["audio"] += 1
+
+    # Step: Generate video clips
+    if step in (None, "clips"):
+        for scene in target_scenes:
+            clip_path = project_dir / "clips" / f"scene_{scene['id']:03d}.mp4"
+            if clip_path.exists():
+                scene["video_path"] = str(clip_path)
+                continue
+            if not scene.get("image_path") or not scene.get("audio_path"):
+                results["failed"].append({"scene": scene["id"], "step": "clip", "reason": "missing assets"})
+                continue
+
+            # Upload
+            img_remote = _upload_file(scene["image_path"])
+            audio_remote = _upload_file(scene["audio_path"])
+            if not img_remote or not audio_remote:
+                results["failed"].append({"scene": scene["id"], "step": "clip", "reason": "upload failed"})
+                continue
+
+            duration = scene["end"] - scene["start"]
+            frame_count = max(49, int(duration * 25))
+            if frame_count % 2 == 0:
+                frame_count += 1
+
+            output = _run_comfy(
+                "go", "presets/ltx23-a2v_workflow.json",
+                "--set", f"269.image={img_remote}",
+                "--set", f"270.audio={audio_remote}",
+                "--set", f"267:266.value={scene.get('motion_prompt', 'cinematic motion')}",
+                "--set", f"267:225.value={frame_count}",
+                "--set", f"267:216.noise_seed={scene.get('seed', 42 + scene['id'])}",
+                timeout=300,
+            )
+            saved = _find_saved_file(output)
+            if saved:
+                shutil.copy2(saved, str(clip_path))
+                scene["video_path"] = str(clip_path)
+                results["clips"] += 1
+            else:
+                results["failed"].append({"scene": scene["id"], "step": "clip"})
+
+    # Save progress
+    data["scenes"] = all_scenes
+    sb_path.write_text(json.dumps(data, indent=2))
+
+    return json.dumps({
+        "status": "generated",
+        **results,
+        "total_scenes": len(target_scenes),
+    }, indent=2)
+
+
+@mcp.tool()
+@_handle_errors
+def comfy_mv_stitch(
+    project_name: str,
+    output_filename: str | None = None,
+) -> str:
+    """Stitch all video clips into the final music video with the original audio.
+
+    Concatenates clips in scene order, scales to consistent 1280x720,
+    and overlays the original music track.
+
+    Args:
+        project_name: Project directory name.
+        output_filename: Output filename. Defaults to '{title}_Music_Video.mp4'.
+    """
+    import subprocess as sp
+    project_dir = PROJECTS_DIR / project_name
+    sb_path = project_dir / "storyboard.json"
+    if not sb_path.exists():
+        return json.dumps({"error": f"Project '{project_name}' not found"})
+
+    data = json.loads(sb_path.read_text())
+    scenes = data["scenes"]
+    audio_path = data["audio_path"]
+    title = data.get("title", project_name)
+
+    if not output_filename:
+        safe_title = title.replace(" ", "_").replace("'", "")
+        output_filename = f"{safe_title}_Music_Video.mp4"
+    output_path = project_dir / output_filename
+
+    # Build concat file
+    concat_file = project_dir / "concat.txt"
+    lines = []
+    valid = 0
+    for scene in scenes:
+        vp = scene.get("video_path", "")
+        if vp and Path(vp).exists():
+            escaped = vp.replace("'", "'\\''")
+            lines.append(f"file '{escaped}'")
+            duration = scene["end"] - scene["start"]
+            lines.append(f"duration {duration:.3f}")
+            valid += 1
+
+    if not lines:
+        return json.dumps({"error": "No valid clips to stitch"})
+    concat_file.write_text("\n".join(lines))
+
+    # Concat video
+    temp = project_dir / "temp_video.mp4"
+    sp.run([
+        "ffmpeg", "-y",
+        "-f", "concat", "-safe", "0", "-i", str(concat_file),
+        "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2",
+        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+        "-an", str(temp),
+    ], capture_output=True)
+
+    # Overlay original audio
+    sp.run([
+        "ffmpeg", "-y",
+        "-i", str(temp), "-i", audio_path,
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "320k",
+        "-map", "0:v", "-map", "1:a",
+        "-shortest", str(output_path),
+    ], capture_output=True)
+
+    temp.unlink(missing_ok=True)
+    concat_file.unlink(missing_ok=True)
+
+    if output_path.exists():
+        size_mb = output_path.stat().st_size / (1024 * 1024)
+        return json.dumps({
+            "status": "complete",
+            "output": str(output_path),
+            "size_mb": round(size_mb, 1),
+            "clips_used": valid,
+            "total_scenes": len(scenes),
+        })
+    return json.dumps({"error": "Stitch failed — output not created"})
+
+
+@mcp.tool()
+def comfy_mv_status(project_name: str) -> str:
+    """Check music video project status — what's done, pending, and failed.
+
+    Args:
+        project_name: Project directory name.
+    """
+    project_dir = PROJECTS_DIR / project_name
+    sb_path = project_dir / "storyboard.json"
+    if not sb_path.exists():
+        return json.dumps({"error": f"Project '{project_name}' not found"})
+
+    data = json.loads(sb_path.read_text())
+    scenes = data["scenes"]
+
+    status = {
+        "title": data.get("title", ""),
+        "duration": round(data.get("duration", 0), 1),
+        "total_scenes": len(scenes),
+        "has_prompts": sum(1 for s in scenes if s.get("prompt")),
+        "has_images": sum(1 for s in scenes if s.get("image_path") and Path(s["image_path"]).exists()),
+        "has_audio": sum(1 for s in scenes if s.get("audio_path") and Path(s["audio_path"]).exists()),
+        "has_clips": sum(1 for s in scenes if s.get("video_path") and Path(s["video_path"]).exists()),
+        "missing_prompts": [s["id"] for s in scenes if not s.get("prompt")],
+        "missing_clips": [s["id"] for s in scenes if not (s.get("video_path") and Path(s["video_path"]).exists())],
+    }
+
+    output_candidates = list(project_dir.glob("*_Music_Video.mp4"))
+    if output_candidates:
+        latest = max(output_candidates, key=lambda p: p.stat().st_mtime)
+        status["output"] = str(latest)
+        status["output_size_mb"] = round(latest.stat().st_size / (1024 * 1024), 1)
+
+    return json.dumps(status, indent=2)
+
+
+# ── Helpers for music video ─────────────────────────────────────────────
+
+
+def _find_saved_file(output: str) -> str | None:
+    """Extract saved file path from comfy.sh output."""
+    if not output:
+        return None
+    for line in output.splitlines():
+        if line.strip().startswith("Saved "):
+            path = line.strip().replace("Saved ", "").strip()
+            full = COMFY_SH.parent / path
+            if full.exists():
+                return str(full)
+    return None
+
+
+def _upload_file(local_path: str) -> str | None:
+    """Upload a file and return the remote filename."""
+    output = _run_comfy("upload", local_path)
+    if not output:
+        return None
+    try:
+        data = json.loads(output)
+        return data.get("name", "")
+    except json.JSONDecodeError:
+        return output.strip().splitlines()[-1].strip()
+
+
 # ── Entry point ──────────────────────────────────────────────────────────
 
 

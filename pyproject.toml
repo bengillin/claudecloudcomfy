@@ -5,6 +5,7 @@ description = "MCP server for Comfy Cloud creative agent"
 requires-python = ">=3.11"
 dependencies = [
     "mcp[cli]>=1.0.0",
+    "openai-whisper>=20250625",
 ]
 
 [build-system]
