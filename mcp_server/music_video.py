@@ -425,9 +425,105 @@ def plan(
         max_duration=max_duration,
     )
 
+    # Auto-suggest 5W elements from lyrics
+    all_text = " ".join(s.text for s in scenes if s.text).lower()
+    suggested = _suggest_elements(all_text, title)
+
     return Storyboard(
         title=title,
         audio_path=str(Path(audio_path).resolve()),
         duration=duration,
         scenes=scenes,
+        elements=suggested,
     )
+
+
+def _suggest_elements(text: str, title: str) -> list:
+    """Extract suggested 5W elements from lyrics via keyword matching.
+
+    This is a rough first pass — Claude refines these via comfy_mv_set_brief.
+    """
+    elements = []
+
+    # WHO — look for character references
+    who_patterns = {
+        "narrator": ["i ", "i'm ", "my ", "me ", "i've "],
+        "police": ["police", "cops", "officer", "sheriff", "deputy", "swat"],
+        "crowd": ["crowd", "people", "audience", "fans", "everybody"],
+        "lover": ["baby", "girl", "babe", "honey", "darling"],
+        "antagonist": ["they ", "them ", "enemy", "hater"],
+    }
+    for char_id, keywords in who_patterns.items():
+        if any(kw in text for kw in keywords):
+            elements.append(WorldElement(
+                id=char_id, category="who",
+                name=char_id.title(),
+                description=f"Character suggested from lyrics — needs visual description",
+            ))
+
+    # WHERE — locations
+    where_patterns = {
+        "street": ["street", "road", "sidewalk", "block", "hood", "neighborhood"],
+        "house": ["house", "home", "door", "room", "kitchen", "bedroom", "crib"],
+        "court": ["court", "judge", "trial", "jury", "gavel"],
+        "stage": ["stage", "mic", "concert", "perform", "show"],
+        "club": ["club", "bar", "party", "dance floor"],
+        "car": ["car", "ride", "driving", "whip", "trunk"],
+        "jail": ["jail", "prison", "cell", "locked up", "behind bars"],
+    }
+    for loc_id, keywords in where_patterns.items():
+        if any(kw in text for kw in keywords):
+            elements.append(WorldElement(
+                id=loc_id, category="where",
+                name=loc_id.title(),
+                description=f"Location suggested from lyrics — needs visual description",
+            ))
+
+    # WHEN — time/atmosphere
+    when_patterns = {
+        "night": ["night", "dark", "midnight", "moonlight", "after dark"],
+        "day": ["sun", "morning", "daylight", "bright", "noon"],
+        "golden-hour": ["sunset", "sunrise", "golden", "dusk", "dawn"],
+    }
+    for time_id, keywords in when_patterns.items():
+        if any(kw in text for kw in keywords):
+            elements.append(WorldElement(
+                id=time_id, category="when",
+                name=time_id.replace("-", " ").title(),
+                description=f"Time/atmosphere suggested from lyrics — needs visual description",
+            ))
+
+    # WHAT — key objects/actions
+    what_patterns = {
+        "money": ["money", "cash", "dollar", "bucks", "bread", "paid"],
+        "gun": ["gun", "rifle", "weapon", "shoot", "trigger"],
+        "phone": ["phone", "call", "text", "screen"],
+        "music": ["guitar", "mic", "beat", "song", "music", "rap", "sing"],
+        "camera": ["camera", "film", "record", "footage", "surveillance"],
+        "drugs": ["smoke", "weed", "high", "blunt", "joint"],
+    }
+    for obj_id, keywords in what_patterns.items():
+        if any(kw in text for kw in keywords):
+            elements.append(WorldElement(
+                id=obj_id, category="what",
+                name=obj_id.title(),
+                description=f"Object/action suggested from lyrics — needs visual description",
+            ))
+
+    # WHY — mood/emotion (always suggest at least one)
+    why_patterns = {
+        "defiance": ["fight", "stand", "defy", "resist", "never", "won't"],
+        "triumph": ["win", "victory", "champion", "ruling", "case closed"],
+        "anger": ["angry", "mad", "rage", "furious", "hate"],
+        "joy": ["happy", "love", "celebrate", "party", "good"],
+        "pain": ["hurt", "cry", "tears", "pain", "broken"],
+    }
+    for mood_id, keywords in why_patterns.items():
+        if any(kw in text for kw in keywords):
+            elements.append(WorldElement(
+                id=mood_id, category="why",
+                name=mood_id.title(),
+                description=f"Mood/emotion suggested from lyrics — needs visual description",
+            ))
+
+    return elements
