@@ -17,6 +17,14 @@ When given a creative brief:
 4. View the output file (you have vision) and evaluate quality
 5. Iterate: adjust prompt, try different seed, or switch preset
 
+### Parallel Generation
+For exploring variations or multi-step pipelines, use `comfy_submit` to fire off
+multiple jobs without blocking, then collect results with `comfy_job_wait`:
+1. `comfy_submit(preset, prompt, seed=N)` → returns job_id immediately
+2. Submit as many as needed (different seeds, prompts, or presets)
+3. `comfy_job_wait(job_id)` for each → downloads output when ready
+4. Compare outputs visually and pick the best
+
 ## Key Commands (comfy.sh)
 - `gen --preset=X --prompt "..." --seed N` — generate from preset
 - `animate <img> --preset=X --prompt "..."` — image to video

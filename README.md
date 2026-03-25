@@ -208,6 +208,7 @@ Export any workflow from ComfyUI Cloud as API-format JSON, then:
 | `comfy.sh` | CLI — every API endpoint + gen, animate, batch, presets, monitoring |
 | `mcp_server/server.py` | FastMCP server — 18 tools, 2 resources, 2 prompts |
 | `mcp_server/config.py` | Path resolution + .env loading for MCP server |
+| `tests/test_server.py` | 29 tests — presets, tools, errors, projects (no API calls) |
 | `pyproject.toml` | Python project config (uv, mcp dependency) |
 | `workflows/` | 5 official ComfyUI Cloud workflow JSONs (all verified) |
 | `presets/` | Preset configs with prompt guides and capabilities |
