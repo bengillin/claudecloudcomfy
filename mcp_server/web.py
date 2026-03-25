@@ -193,9 +193,32 @@ async def api_mv_plan(project: str, file: UploadFile = File(...), title: str = F
 
 
 @app.post("/api/mv/{project}/elements")
-async def api_mv_add_element(project: str, req: Request):
-    body = await req.json()
-    return _j(await _bg(comfy_mv_add_element, project_name=project, **body))
+async def api_mv_add_element(
+    project: str,
+    element_id: str = Form(...),
+    category: str = Form(...),
+    name: str = Form(...),
+    description: str = Form(""),
+    files: list[UploadFile] = File(default=[]),
+):
+    # Save uploaded files to temp paths
+    source_paths = []
+    for f in files:
+        if f.filename:
+            suffix = Path(f.filename).suffix
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, dir=str(DOWNLOADS_DIR)) as tmp:
+                tmp.write(await f.read())
+                source_paths.append(tmp.name)
+
+    return _j(await _bg(
+        comfy_mv_add_element,
+        project_name=project,
+        element_id=element_id,
+        category=category,
+        name=name,
+        description=description,
+        source_images=source_paths or None,
+    ))
 
 
 @app.get("/api/mv/{project}/elements")
@@ -207,6 +230,37 @@ async def api_mv_elements(project: str):
 async def api_mv_update_element(project: str, element_id: str, req: Request):
     body = await req.json()
     return _j(await _bg(comfy_mv_update_element, project_name=project, element_id=element_id, **body))
+
+
+@app.post("/api/mv/{project}/elements/{element_id}/upload")
+async def api_mv_upload_source(project: str, element_id: str, files: list[UploadFile] = File(...)):
+    """Upload source images to an existing element."""
+    from .music_video import Storyboard
+
+    project_dir = PROJECTS_DIR / project
+    sb_path = project_dir / "storyboard.json"
+    if not sb_path.exists():
+        return JSONResponse({"error": "project not found"}, 404)
+
+    sb = Storyboard.load(sb_path)
+    element = sb.get_element(element_id)
+    if not element:
+        return JSONResponse({"error": "element not found"}, 404)
+
+    elements_dir = project_dir / "elements" / element_id
+    elements_dir.mkdir(parents=True, exist_ok=True)
+
+    added = []
+    for f in files:
+        if f.filename:
+            suffix = Path(f.filename).suffix
+            dest = elements_dir / f"source_{f.filename}"
+            dest.write_bytes(await f.read())
+            element.source_images.append(str(dest))
+            added.append(str(dest))
+
+    sb.save(sb_path)
+    return {"status": "uploaded", "added": len(added), "total_sources": len(element.source_images)}
 
 
 @app.post("/api/mv/{project}/elements/{element_id}/generate")

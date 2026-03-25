@@ -141,10 +141,25 @@
             <button @click="mvAddingElement=cat" class="text-xs bg-gray-800 px-2 py-1 rounded hover:bg-gray-700">+ Add</button>
           </div>
           <template x-for="el in mvElements.filter(e => e.category === cat)" :key="el.id">
-            <div class="flex items-center gap-2 py-1">
-              <span class="text-sm" x-text="el.name"></span>
-              <span class="text-xs text-gray-500" x-text="el.reference_images + ' refs'"></span>
-              <button @click="mvGenElement(el.id)" class="text-xs text-blue-400 hover:text-blue-300 ml-auto">Generate Ref</button>
+            <div class="py-2 border-t border-gray-800">
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-medium" x-text="el.name"></span>
+                <span class="text-xs text-gray-500" x-text="(el.source_images||0) + ' src, ' + (el.reference_images||0) + ' refs'"></span>
+                <div class="ml-auto flex gap-1">
+                  <label class="text-xs text-green-400 hover:text-green-300 cursor-pointer">
+                    <input type="file" accept="image/*" multiple @change="mvUploadSourceImages(el.id, $event)" class="hidden">
+                    Upload
+                  </label>
+                  <button @click="mvGenElement(el.id)" class="text-xs text-blue-400 hover:text-blue-300">Generate</button>
+                </div>
+              </div>
+              <p class="text-xs text-gray-600 mt-0.5 line-clamp-1" x-text="el.description"></p>
+              <!-- Reference image thumbnails -->
+              <div x-show="el.reference_paths?.length" class="flex gap-1 mt-2 overflow-x-auto">
+                <template x-for="ref in el.reference_paths || []" :key="ref">
+                  <img :src="'/files/' + ref" class="h-16 w-16 rounded object-cover flex-shrink-0">
+                </template>
+              </div>
             </div>
           </template>
         </div>
@@ -156,6 +171,10 @@
       <input x-model="mvNewEl.id" placeholder="ID (slug)" class="w-full bg-gray-900 border border-gray-700 rounded p-2 text-sm">
       <input x-model="mvNewEl.name" placeholder="Name" class="w-full bg-gray-900 border border-gray-700 rounded p-2 text-sm">
       <textarea x-model="mvNewEl.description" placeholder="Visual description..." rows="2" class="w-full bg-gray-900 border border-gray-700 rounded p-2 text-sm resize-none"></textarea>
+      <label class="block w-full border border-dashed border-gray-600 rounded p-3 text-center cursor-pointer hover:border-gray-400">
+        <input type="file" accept="image/*" multiple @change="mvNewEl.files = $event.target.files" class="hidden">
+        <span class="text-xs text-gray-400" x-text="mvNewEl.files?.length ? mvNewEl.files.length + ' image(s) selected' : 'Reference images (optional)'"></span>
+      </label>
       <div class="flex gap-2">
         <button @click="mvSaveElement()" class="bg-blue-600 px-3 py-1.5 rounded text-sm">Save</button>
         <button @click="mvAddingElement=null" class="bg-gray-700 px-3 py-1.5 rounded text-sm">Cancel</button>
@@ -352,13 +371,24 @@ function app() {
     },
 
     async mvSaveElement() {
-      await fetch(`/api/mv/${this.mvProject}/elements`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...this.mvNewEl, category: this.mvAddingElement })
-      });
+      const fd = new FormData();
+      fd.append('element_id', this.mvNewEl.id);
+      fd.append('name', this.mvNewEl.name);
+      fd.append('description', this.mvNewEl.description);
+      fd.append('category', this.mvAddingElement);
+      if (this.mvNewEl.files) {
+        for (const f of this.mvNewEl.files) fd.append('files', f);
+      }
+      await fetch(`/api/mv/${this.mvProject}/elements`, { method: 'POST', body: fd });
       this.mvNewEl = { id: '', name: '', description: '' };
       this.mvAddingElement = null;
+      this.mvLoadElements();
+    },
+
+    async mvUploadSourceImages(elementId, event) {
+      const fd = new FormData();
+      for (const f of event.target.files) fd.append('files', f);
+      await fetch(`/api/mv/${this.mvProject}/elements/${elementId}/upload`, { method: 'POST', body: fd });
       this.mvLoadElements();
     },
 
