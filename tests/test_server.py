@@ -1,6 +1,7 @@
 """Tests for the Comfy Cloud MCP server — no API calls needed."""
 
 import json
+import os
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 
@@ -89,6 +90,7 @@ def test_parse_saved_files_multiple():
 # ── _run_comfy ──────────────────────────────────────────────────────────
 
 
+@pytest.mark.skipif(not os.environ.get("COMFY_API_KEY"), reason="No API key")
 def test_run_comfy_help():
     """comfy.sh help should always work without API key."""
     output = _run_comfy("help")
@@ -296,7 +298,14 @@ def test_handle_errors_catches_comfy_error():
 
 
 @patch("mcp_server.server._run_comfy")
-def test_comfy_submit_returns_job_id(mock_run):
+@patch("mcp_server.server._load_preset")
+def test_comfy_submit_returns_job_id(mock_preset, mock_run):
+    mock_preset.return_value = {
+        "workflow": "z-turbo_workflow.json",
+        "prompt_node": "6",
+        "prompt_field": "text",
+        "seed_node": "3",
+    }
     mock_run.return_value = '{"prompt_id": "abc-123"}'
     from mcp_server.server import comfy_submit
     result = json.loads(comfy_submit(preset="z-turbo", prompt="a cat", seed=42))
