@@ -7,27 +7,26 @@ AI-powered creative studio built on [Comfy Cloud](https://docs.comfy.org/develop
 ```bash
 git clone https://github.com/bengillin/claudecloudcomfy.git
 cd claudecloudcomfy
-brew install uv          # if you don't have uv
-uv sync                  # install Python deps
-cp .env.example .env     # then paste your API key (get one at platform.comfy.org/profile/api-keys)
+cp .env.example .env     # paste your API key (get one at platform.comfy.org/profile/api-keys)
 ```
 
-**Web UI** (recommended for first time):
-```bash
-uv run python -m mcp_server --web
-# → open http://localhost:8188
-# Pick a preset, type a prompt, hit Generate
-```
-
-**Claude Code** (AI-driven creative agent):
-```bash
-# Just open Claude Code in this directory — MCP server auto-connects via .mcp.json
-# Say: "Generate a cyberpunk portrait" or "Make a music video for this song"
-```
-
-**CLI** (direct access):
+**CLI** — works immediately, no Python needed:
 ```bash
 ./comfy.sh gen --preset=z-turbo --prompt "cyberpunk portrait, neon lighting" --open
+```
+
+**Web UI** — needs [uv](https://docs.astral.sh/uv/) for Python:
+```bash
+brew install uv && uv sync
+uv run python -m mcp_server --web
+# → http://localhost:8188
+```
+
+**Claude Code** — AI-driven creative agent (needs uv + [Claude Code](https://docs.anthropic.com/en/docs/claude-code)):
+```bash
+brew install uv && uv sync
+# Open Claude Code in this directory — MCP server auto-connects via .mcp.json
+# Say: "Generate a cyberpunk portrait" or "Make a music video for this song"
 ```
 
 ## Creative agent (MCP)
