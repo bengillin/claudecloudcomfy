@@ -95,6 +95,22 @@ async def serve_file(filepath: str):
 # ── Presets ──────────────────────────────────────────────────────────────
 
 
+@app.get("/api/health")
+async def api_health():
+    """Check if API key is configured and comfy.sh is working."""
+    import os
+    has_key = bool(os.environ.get("COMFY_API_KEY"))
+    if not has_key:
+        # Check .env file
+        env_file = PROJECT_ROOT / ".env"
+        if env_file.exists():
+            for line in env_file.read_text().splitlines():
+                if line.strip().startswith("COMFY_API_KEY") and "your_api_key_here" not in line:
+                    has_key = True
+                    break
+    return {"ok": has_key, "presets_dir": str(PRESETS_DIR), "has_presets": PRESETS_DIR.exists() and any(PRESETS_DIR.glob("*.json"))}
+
+
 @app.get("/api/presets")
 async def api_presets():
     return _j(await _bg(comfy_list_presets))

@@ -16,7 +16,7 @@
 <body class="bg-gray-950 text-gray-100 min-h-screen" x-data="app()" x-init="init()">
 
 <!-- Nav -->
-<nav class="sticky top-0 z-50 bg-gray-900/90 backdrop-blur border-b border-gray-800">
+<nav x-show="ready" class="sticky top-0 z-50 bg-gray-900/90 backdrop-blur border-b border-gray-800">
   <div class="max-w-5xl mx-auto flex items-center gap-1 p-2">
     <span class="text-lg font-bold mr-4">&#9889; Studio</span>
     <button @click="mode='studio'" :class="mode==='studio' ? 'bg-gray-700' : 'bg-gray-800'" class="px-3 py-1.5 rounded-lg text-sm">Studio</button>
@@ -27,6 +27,28 @@
 </nav>
 
 <main class="max-w-5xl mx-auto p-3 pb-20">
+
+<!-- ═══════════ SETUP ═══════════ -->
+<template x-if="!ready" x-cloak>
+<div class="max-w-md mx-auto mt-12 space-y-4 text-center fade-in">
+  <div class="text-4xl">&#9889;</div>
+  <h1 class="text-xl font-bold">Welcome to Comfy Cloud Studio</h1>
+  <template x-if="setupError === 'no_key'">
+    <div class="bg-gray-900 rounded-lg p-6 text-left space-y-3 border border-gray-800">
+      <p class="text-sm text-gray-300">API key not found. Set it up:</p>
+      <ol class="text-sm text-gray-400 space-y-2 list-decimal list-inside">
+        <li>Get a key at <a href="https://platform.comfy.org/profile/api-keys" target="_blank" class="text-blue-400 underline">platform.comfy.org</a></li>
+        <li>Edit <code class="bg-gray-800 px-1 rounded">.env</code> in the project root</li>
+        <li>Set <code class="bg-gray-800 px-1 rounded">COMFY_API_KEY=your_key</code></li>
+        <li>Restart the server</li>
+      </ol>
+    </div>
+  </template>
+  <template x-if="setupError === 'loading'">
+    <p class="text-gray-400 animate-pulse">Loading...</p>
+  </template>
+</div>
+</template>
 
 <!-- ═══════════ STUDIO MODE ═══════════ -->
 <template x-if="mode==='studio'" x-cloak>
@@ -261,6 +283,8 @@
 <script>
 function app() {
   return {
+    ready: false,
+    setupError: 'loading',
     mode: 'studio',
     // Studio
     presets: {},
@@ -288,8 +312,18 @@ function app() {
     mvPollTimer: null,
 
     async init() {
-      await this.loadPresets();
-      await this.loadGallery();
+      try {
+        const health = await fetch('/api/health').then(r => r.json());
+        if (!health.ok) {
+          this.setupError = 'no_key';
+          return;
+        }
+        this.ready = true;
+        await this.loadPresets();
+        await this.loadGallery();
+      } catch (e) {
+        this.setupError = 'no_key';
+      }
     },
 
     async loadPresets() {

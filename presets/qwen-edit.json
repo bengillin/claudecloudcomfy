@@ -1,0 +1,13 @@
+{
+  "workflow": "qwen-edit_workflow.json",
+  "description": "Qwen Image Edit — instruction-based editing, 4 steps",
+  "prompt_node": "435",
+  "prompt_field": "value",
+  "seed_node": "433:3",
+  "image_node": "78",
+  "capabilities": ["edit"],
+  "output_format": "png",
+  "typical_time_seconds": 20,
+  "prompt_guide": "Give editing instructions, not scene descriptions. Be specific about what to change: 'change the background to a basketball court', 'add a gold border around the card', 'make the lighting more dramatic'. The model sees the input image, so reference existing elements: 'remove the text in the top left'. Keep instructions concise — one clear edit per generation works best.",
+  "defaults": []
+}

@@ -1,0 +1,12 @@
+{
+  "workflow": "z-turbo_workflow.json",
+  "description": "Z-Image Turbo txt2img — 1024x1024, 8 steps, instant",
+  "prompt_node": "57:27",
+  "prompt_field": "text",
+  "seed_node": "57:3",
+  "capabilities": ["txt2img"],
+  "output_format": "png",
+  "typical_time_seconds": 15,
+  "prompt_guide": "Describe the scene directly. Works best with detailed visual descriptions: subject, setting, lighting, style. Example: 'a basketball card floating in deep space, holographic neon edges, dramatic rim lighting, dark background'. Supports style keywords like 'photorealistic', 'cinematic', 'illustration', 'oil painting'. Keep under 200 words.",
+  "defaults": []
+}

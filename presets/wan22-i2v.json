@@ -1,0 +1,13 @@
+{
+  "workflow": "wan22-i2v_workflow.json",
+  "description": "Wan 2.2 14B I2V official — dual model, 4-step LoRA",
+  "prompt_node": "129:93",
+  "prompt_field": "text",
+  "seed_node": "129:86",
+  "image_node": "97",
+  "capabilities": ["img2vid"],
+  "output_format": "mp4",
+  "typical_time_seconds": 30,
+  "prompt_guide": "Describe motion and camera movement, not the scene (the image already provides that). Use temporal words: 'slowly', 'gradually', 'camera pans left', 'zooms in'. Focus on what changes: 'hair blowing in wind', 'cards tumbling through air'. Keep under 150 words. Avoid describing static elements already in the image.",
+  "defaults": []
+}

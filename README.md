@@ -1,27 +1,34 @@
 # claudecloudcomfy
 
-A creative agent toolkit for [Comfy Cloud](https://docs.comfy.org/development/cloud/overview). Run ComfyUI workflows from your terminal with a battle-tested bash CLI, or let Claude autonomously plan and execute multi-step creative pipelines via MCP.
+AI-powered creative studio built on [Comfy Cloud](https://docs.comfy.org/development/cloud/overview). Generate images, animate videos, and create full music videos with lip-synced characters — from a web UI, Claude Code, or the command line.
 
-## Setup
+## Quick start
 
-1. Get an API key at [platform.comfy.org/profile/api-keys](https://platform.comfy.org/profile/api-keys)
+```bash
+git clone https://github.com/bengillin/claudecloudcomfy.git
+cd claudecloudcomfy
+brew install uv          # if you don't have uv
+uv sync                  # install Python deps
+cp .env.example .env     # then paste your API key (get one at platform.comfy.org/profile/api-keys)
+```
 
-2. Configure:
-   ```bash
-   cp .env.example .env
-   # paste your API key into .env
-   ```
+**Web UI** (recommended for first time):
+```bash
+uv run python -m mcp_server --web
+# → open http://localhost:8188
+# Pick a preset, type a prompt, hit Generate
+```
 
-3. Install Python dependencies (for MCP server):
-   ```bash
-   brew install uv  # if you don't have uv
-   uv sync
-   ```
+**Claude Code** (AI-driven creative agent):
+```bash
+# Just open Claude Code in this directory — MCP server auto-connects via .mcp.json
+# Say: "Generate a cyberpunk portrait" or "Make a music video for this song"
+```
 
-4. Test:
-   ```bash
-   ./comfy.sh user
-   ```
+**CLI** (direct access):
+```bash
+./comfy.sh gen --preset=z-turbo --prompt "cyberpunk portrait, neon lighting" --open
+```
 
 ## Creative agent (MCP)
 

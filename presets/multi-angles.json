@@ -1,0 +1,10 @@
+{
+  "workflow": "multi-angles_workflow.json",
+  "description": "8-angle character rerender from single image",
+  "image_node": "25",
+  "capabilities": ["multi-angle"],
+  "output_format": "png",
+  "typical_time_seconds": 45,
+  "prompt_guide": "No prompt needed — this preset takes a single character/object image and generates 8 views from different angles. Best with clean subjects on simple backgrounds. The input image should clearly show the subject. Outputs 8 separate angle renders.",
+  "defaults": []
+}
