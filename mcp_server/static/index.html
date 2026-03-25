@@ -242,8 +242,34 @@
           <div class="flex items-center gap-2 mb-1">
             <span class="text-xs bg-gray-800 px-2 py-0.5 rounded" x-text="scene.start.toFixed(1) + 's - ' + scene.end.toFixed(1) + 's'"></span>
             <span class="text-xs text-gray-500" x-text="scene.segment_type"></span>
+            <span class="text-xs text-gray-600" x-text="(scene.end - scene.start).toFixed(1) + 's'"></span>
           </div>
           <p class="text-xs text-gray-400 mb-2 line-clamp-2" x-text="scene.text"></p>
+
+          <!-- Element tags -->
+          <div class="flex flex-wrap gap-1 mb-2">
+            <template x-for="(ref, ri) in scene.element_refs || []" :key="ref.element_id">
+              <span class="inline-flex items-center gap-1 text-xs bg-gray-800 border border-gray-700 px-2 py-0.5 rounded-full">
+                <span x-text="ref.element_id"></span>
+                <button @click="scene.element_refs.splice(ri, 1)" class="text-gray-500 hover:text-red-400">&times;</button>
+              </span>
+            </template>
+            <!-- Add element dropdown -->
+            <div class="relative inline-block" x-data="{open: false}">
+              <button @click="open = !open" class="text-xs bg-gray-800 border border-dashed border-gray-600 px-2 py-0.5 rounded-full hover:border-gray-400">+ element</button>
+              <div x-show="open" @click.away="open = false" class="absolute z-10 mt-1 left-0 bg-gray-800 border border-gray-700 rounded-lg shadow-lg p-1 max-h-48 overflow-y-auto w-48">
+                <template x-for="el in mvElements.filter(e => !(scene.element_refs||[]).some(r => r.element_id === e.id))" :key="el.id">
+                  <button @click="if(!scene.element_refs) scene.element_refs=[]; scene.element_refs.push({element_id: el.id, override_description: ''}); open=false"
+                          class="block w-full text-left px-2 py-1 text-xs rounded hover:bg-gray-700">
+                    <span class="text-gray-500 uppercase" x-text="el.category"></span>
+                    <span x-text="el.name" class="ml-1"></span>
+                  </button>
+                </template>
+                <button @click="mvAddingElement='what'; mvStep=1; open=false" class="block w-full text-left px-2 py-1 text-xs text-blue-400 rounded hover:bg-gray-700 border-t border-gray-700 mt-1 pt-1">+ New element...</button>
+              </div>
+            </div>
+          </div>
+
           <textarea x-model="scene.prompt" placeholder="Visual prompt..." rows="2"
                     class="w-full bg-gray-950 border border-gray-700 rounded p-2 text-xs resize-none mb-1"></textarea>
           <textarea x-model="scene.motion_prompt" placeholder="Motion/camera prompt..." rows="1"
@@ -482,7 +508,12 @@ function app() {
       await fetch(`/api/mv/${this.mvProject}/prompts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scene_prompts: this.mvScenes.map(s => ({ id: s.id, prompt: s.prompt, motion_prompt: s.motion_prompt })) })
+        body: JSON.stringify({ scene_prompts: this.mvScenes.map(s => ({
+          id: s.id,
+          prompt: s.prompt,
+          motion_prompt: s.motion_prompt,
+          element_refs: s.element_refs || [],
+        })) })
       });
     },
 

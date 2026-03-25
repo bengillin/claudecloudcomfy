@@ -1241,6 +1241,8 @@ def comfy_mv_set_prompts(
                 scene["motion_prompt"] = sp["motion_prompt"]
             if "seed" in sp:
                 scene["seed"] = sp["seed"]
+            if "element_refs" in sp:
+                scene["element_refs"] = sp["element_refs"]
             updated += 1
 
     sb_path.write_text(json.dumps(data, indent=2))

@@ -429,6 +429,9 @@ def plan(
     all_text = " ".join(s.text for s in scenes if s.text).lower()
     suggested = _suggest_elements(all_text, title)
 
+    # Auto-assign elements to scenes and suggest prompts
+    _assign_elements_to_scenes(scenes, suggested)
+
     return Storyboard(
         title=title,
         audio_path=str(Path(audio_path).resolve()),
@@ -436,6 +439,91 @@ def plan(
         scenes=scenes,
         elements=suggested,
     )
+
+
+def _assign_elements_to_scenes(scenes: list[Scene], elements: list[WorldElement]):
+    """Match elements to scenes based on keyword overlap, then build suggested prompts."""
+    # Build keyword lookup per element (reuse the pattern dictionaries)
+    element_keywords = {}
+    all_patterns = {
+        **{eid: kws for eid, kws in [
+            ("narrator", ["i ", "i'm ", "my ", "me "]),
+            ("police", ["police", "cops", "officer", "sheriff", "deputy", "raid"]),
+            ("crowd", ["crowd", "people", "audience", "fans"]),
+            ("lover", ["baby", "girl", "babe"]),
+            ("antagonist", ["they ", "them "]),
+            ("street", ["street", "road", "block", "neighborhood"]),
+            ("house", ["house", "home", "door", "room", "crib", "front door", "gate"]),
+            ("court", ["court", "judge", "trial", "jury", "gavel", "ruling"]),
+            ("stage", ["stage", "mic", "concert", "perform"]),
+            ("club", ["club", "bar", "party"]),
+            ("car", ["car", "ride", "driving"]),
+            ("jail", ["jail", "prison", "cell"]),
+            ("night", ["night", "dark", "midnight"]),
+            ("day", ["sun", "morning", "daylight"]),
+            ("golden-hour", ["sunset", "sunrise", "golden"]),
+            ("money", ["money", "cash", "dollar", "bucks"]),
+            ("gun", ["gun", "rifle", "weapon"]),
+            ("phone", ["phone", "call"]),
+            ("music", ["guitar", "mic", "beat", "song", "music", "rap"]),
+            ("camera", ["camera", "film", "footage", "surveillance"]),
+            ("drugs", ["smoke", "weed", "blunt"]),
+            ("defiance", ["fight", "stand", "defy", "won't"]),
+            ("triumph", ["win", "victory", "ruling", "case closed"]),
+            ("anger", ["angry", "mad", "rage"]),
+            ("joy", ["happy", "love", "celebrate"]),
+            ("pain", ["hurt", "cry", "tears"]),
+        ]},
+    }
+
+    element_ids = {e.id for e in elements}
+
+    for scene in scenes:
+        text = scene.text.lower()
+        matched = []
+        for eid, keywords in all_patterns.items():
+            if eid in element_ids and any(kw in text for kw in keywords):
+                matched.append(eid)
+
+        # Always include narrator for scenes with first-person lyrics
+        if "narrator" in element_ids and any(kw in text for kw in ["i ", "i'm ", "my "]):
+            if "narrator" not in matched:
+                matched.append("narrator")
+
+        scene.element_refs = [{"element_id": eid, "override_description": ""} for eid in matched]
+
+        # Build suggested prompt from matched elements
+        parts = []
+        by_cat = {}
+        for eid in matched:
+            el = next((e for e in elements if e.id == eid), None)
+            if el:
+                by_cat.setdefault(el.category, []).append(el.name)
+
+        if "who" in by_cat:
+            parts.append(", ".join(by_cat["who"]))
+        if "where" in by_cat:
+            parts.append("in " + " and ".join(by_cat["where"]))
+        if "when" in by_cat:
+            parts.append(", ".join(by_cat["when"]) + " atmosphere")
+        if "what" in by_cat:
+            parts.append("with " + ", ".join(by_cat["what"]))
+        if "why" in by_cat:
+            parts.append(", ".join(by_cat["why"]) + " energy")
+
+        if parts:
+            scene.prompt = ", ".join(parts) + ", cinematic, photorealistic"
+
+        # Motion prompt from segment type
+        motion_hints = {
+            "intro": "Slow establishing shot, camera gently pushes in",
+            "verse": "Medium shot, subtle camera movement, character performs to camera",
+            "chorus": "Dynamic camera, energy builds, movement syncs to beat",
+            "bridge": "Shifting perspective, transitional mood, camera drifts",
+            "outro": "Camera slowly pulls back, fading energy",
+            "instrumental": "Abstract motion, flowing visuals, atmospheric",
+        }
+        scene.motion_prompt = motion_hints.get(scene.segment_type, "Cinematic camera movement")
 
 
 def _suggest_elements(text: str, title: str) -> list:
