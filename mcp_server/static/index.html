@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Comfy Cloud Studio</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
+<style>
+  [x-cloak] { display: none !important; }
+  .fade-in { animation: fadeIn .3s ease-in; }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  video, img { max-width: 100%; border-radius: 0.5rem; }
+</style>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen" x-data="app()" x-init="init()">
+
+<!-- Nav -->
+<nav class="sticky top-0 z-50 bg-gray-900/90 backdrop-blur border-b border-gray-800">
+  <div class="max-w-5xl mx-auto flex items-center gap-1 p-2">
+    <span class="text-lg font-bold mr-4">&#9889; Studio</span>
+    <button @click="mode='studio'" :class="mode==='studio' ? 'bg-gray-700' : 'bg-gray-800'" class="px-3 py-1.5 rounded-lg text-sm">Studio</button>
+    <button @click="mode='mv'" :class="mode==='mv' ? 'bg-gray-700' : 'bg-gray-800'" class="px-3 py-1.5 rounded-lg text-sm">Music Video</button>
+    <div class="flex-1"></div>
+    <button @click="loadGallery()" class="text-xs text-gray-400 hover:text-gray-200">Gallery</button>
+  </div>
+</nav>
+
+<main class="max-w-5xl mx-auto p-3 pb-20">
+
+<!-- ═══════════ STUDIO MODE ═══════════ -->
+<template x-if="mode==='studio'" x-cloak>
+<div class="space-y-4 fade-in">
+
+  <!-- Preset Picker -->
+  <div>
+    <h2 class="text-sm font-medium text-gray-400 mb-2">Preset</h2>
+    <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+      <template x-for="(info, name) in presets" :key="name">
+        <button @click="selectedPreset=name; promptGuide=info.description"
+                :class="selectedPreset===name ? 'ring-2 ring-blue-500 bg-gray-800' : 'bg-gray-900'"
+                class="p-3 rounded-lg text-left border border-gray-800 hover:border-gray-600">
+          <div class="font-medium text-sm" x-text="name"></div>
+          <div class="text-xs text-gray-500 mt-1" x-text="info.capabilities?.join(', ')"></div>
+        </button>
+      </template>
+    </div>
+  </div>
+
+  <!-- Prompt -->
+  <div>
+    <textarea x-model="prompt" rows="3" placeholder="Describe what you want to create..."
+              class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"></textarea>
+    <p class="text-xs text-gray-600 mt-1" x-text="promptGuide"></p>
+  </div>
+
+  <!-- Image Upload (for img2vid/edit presets) -->
+  <div x-show="presets[selectedPreset]?.has_image_input">
+    <label class="block w-full border-2 border-dashed border-gray-700 rounded-lg p-6 text-center cursor-pointer hover:border-gray-500">
+      <input type="file" accept="image/*" @change="handleImageUpload($event)" class="hidden">
+      <span x-text="uploadedFile ? uploadedFile.name : 'Drop image here or tap to upload'" class="text-sm text-gray-400"></span>
+    </label>
+  </div>
+
+  <!-- Controls -->
+  <div class="flex gap-2 items-center">
+    <input x-model="seed" type="number" placeholder="Seed (random)" class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm w-28">
+    <button @click="generate()" :disabled="generating || !selectedPreset"
+            :class="generating ? 'bg-gray-700' : 'bg-blue-600 hover:bg-blue-500'"
+            class="flex-1 py-2 rounded-lg font-medium text-sm disabled:opacity-50">
+      <span x-text="generating ? status || 'Generating...' : 'Generate'"></span>
+    </button>
+  </div>
+
+  <!-- Result -->
+  <div x-show="result" class="fade-in">
+    <template x-if="result?.file?.endsWith('.mp4')">
+      <video :src="'/files/' + result?.file" controls autoplay loop class="w-full rounded-lg"></video>
+    </template>
+    <template x-if="result?.file && !result?.file?.endsWith('.mp4')">
+      <img :src="'/files/' + result?.file" class="w-full rounded-lg">
+    </template>
+    <div class="flex gap-2 mt-2">
+      <button @click="seed = Math.floor(Math.random()*999999); generate()" class="text-xs bg-gray-800 px-3 py-1.5 rounded-lg hover:bg-gray-700">New Seed</button>
+      <a :href="'/files/' + result?.file" download class="text-xs bg-gray-800 px-3 py-1.5 rounded-lg hover:bg-gray-700">Download</a>
+    </div>
+  </div>
+
+  <!-- Gallery -->
+  <div x-show="gallery.length > 0">
+    <h2 class="text-sm font-medium text-gray-400 mb-2">Recent</h2>
+    <div class="grid grid-cols-3 sm:grid-cols-4 gap-2">
+      <template x-for="f in gallery" :key="f.path">
+        <div @click="viewFile(f)" class="cursor-pointer">
+          <template x-if="f.name.endsWith('.mp4')">
+            <div class="bg-gray-900 rounded-lg aspect-square flex items-center justify-center text-2xl">&#9654;</div>
+          </template>
+          <template x-if="!f.name.endsWith('.mp4')">
+            <img :src="'/files/' + f.path" loading="lazy" class="rounded-lg aspect-square object-cover">
+          </template>
+        </div>
+      </template>
+    </div>
+  </div>
+</div>
+</template>
+
+<!-- ═══════════ MUSIC VIDEO MODE ═══════════ -->
+<template x-if="mode==='mv'" x-cloak>
+<div class="space-y-4 fade-in">
+
+  <!-- Step Indicator -->
+  <div class="flex gap-1 text-xs">
+    <template x-for="(label, i) in ['Upload', 'World', 'Scenes', 'Generate', 'Review']" :key="i">
+      <button @click="mvStep = i" :class="mvStep === i ? 'bg-blue-600' : i < mvStep ? 'bg-green-800' : 'bg-gray-800'" class="flex-1 py-1.5 rounded text-center" x-text="label"></button>
+    </template>
+  </div>
+
+  <!-- Step 0: Upload Song -->
+  <div x-show="mvStep===0" class="space-y-3">
+    <input x-model="mvProject" placeholder="Project name" class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm">
+    <input x-model="mvTitle" placeholder="Song title" class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm">
+    <label class="block w-full border-2 border-dashed border-gray-700 rounded-lg p-8 text-center cursor-pointer hover:border-gray-500">
+      <input type="file" accept="audio/*" @change="mvAudioFile = $event.target.files[0]" class="hidden">
+      <span x-text="mvAudioFile ? mvAudioFile.name : 'Drop song here'" class="text-gray-400"></span>
+    </label>
+    <button @click="mvPlan()" :disabled="!mvProject || !mvAudioFile || mvLoading"
+            class="w-full bg-blue-600 hover:bg-blue-500 py-2 rounded-lg font-medium text-sm disabled:opacity-50">
+      <span x-text="mvLoading ? 'Transcribing...' : 'Plan Video'"></span>
+    </button>
+  </div>
+
+  <!-- Step 1: World Building -->
+  <div x-show="mvStep===1" class="space-y-3">
+    <h2 class="font-medium">World Elements</h2>
+    <div class="grid gap-2">
+      <template x-for="cat in ['who','where','when','what','why']" :key="cat">
+        <div class="bg-gray-900 rounded-lg p-3 border border-gray-800">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-bold uppercase text-gray-400" x-text="cat"></span>
+            <button @click="mvAddingElement=cat" class="text-xs bg-gray-800 px-2 py-1 rounded hover:bg-gray-700">+ Add</button>
+          </div>
+          <template x-for="el in mvElements.filter(e => e.category === cat)" :key="el.id">
+            <div class="flex items-center gap-2 py-1">
+              <span class="text-sm" x-text="el.name"></span>
+              <span class="text-xs text-gray-500" x-text="el.reference_images + ' refs'"></span>
+              <button @click="mvGenElement(el.id)" class="text-xs text-blue-400 hover:text-blue-300 ml-auto">Generate Ref</button>
+            </div>
+          </template>
+        </div>
+      </template>
+    </div>
+
+    <!-- Add Element Modal -->
+    <div x-show="mvAddingElement" class="bg-gray-800 rounded-lg p-4 space-y-2 border border-gray-700">
+      <input x-model="mvNewEl.id" placeholder="ID (slug)" class="w-full bg-gray-900 border border-gray-700 rounded p-2 text-sm">
+      <input x-model="mvNewEl.name" placeholder="Name" class="w-full bg-gray-900 border border-gray-700 rounded p-2 text-sm">
+      <textarea x-model="mvNewEl.description" placeholder="Visual description..." rows="2" class="w-full bg-gray-900 border border-gray-700 rounded p-2 text-sm resize-none"></textarea>
+      <div class="flex gap-2">
+        <button @click="mvSaveElement()" class="bg-blue-600 px-3 py-1.5 rounded text-sm">Save</button>
+        <button @click="mvAddingElement=null" class="bg-gray-700 px-3 py-1.5 rounded text-sm">Cancel</button>
+      </div>
+    </div>
+
+    <button @click="mvStep=2" class="w-full bg-gray-800 hover:bg-gray-700 py-2 rounded-lg text-sm">Next: Scenes →</button>
+  </div>
+
+  <!-- Step 2: Scene Prompts -->
+  <div x-show="mvStep===2" class="space-y-3">
+    <h2 class="font-medium">Scenes <span class="text-gray-500 text-sm" x-text="mvScenes?.length + ' clips'"></span></h2>
+    <div class="space-y-2">
+      <template x-for="scene in mvScenes || []" :key="scene.id">
+        <div class="bg-gray-900 rounded-lg p-3 border border-gray-800">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs bg-gray-800 px-2 py-0.5 rounded" x-text="scene.start.toFixed(1) + 's - ' + scene.end.toFixed(1) + 's'"></span>
+            <span class="text-xs text-gray-500" x-text="scene.segment_type"></span>
+          </div>
+          <p class="text-xs text-gray-400 mb-2 line-clamp-2" x-text="scene.text"></p>
+          <textarea x-model="scene.prompt" placeholder="Visual prompt..." rows="2"
+                    class="w-full bg-gray-950 border border-gray-700 rounded p-2 text-xs resize-none mb-1"></textarea>
+          <textarea x-model="scene.motion_prompt" placeholder="Motion/camera prompt..." rows="1"
+                    class="w-full bg-gray-950 border border-gray-700 rounded p-2 text-xs resize-none"></textarea>
+        </div>
+      </template>
+    </div>
+    <div class="flex gap-2">
+      <button @click="mvSavePrompts()" class="flex-1 bg-blue-600 hover:bg-blue-500 py-2 rounded-lg text-sm">Save Prompts</button>
+      <button @click="mvStep=3" class="flex-1 bg-gray-800 hover:bg-gray-700 py-2 rounded-lg text-sm">Next: Generate →</button>
+    </div>
+  </div>
+
+  <!-- Step 3: Generate -->
+  <div x-show="mvStep===3" class="space-y-3">
+    <h2 class="font-medium">Generate</h2>
+    <div x-show="mvGenStatus" class="bg-gray-900 rounded-lg p-4 border border-gray-800 space-y-2">
+      <div class="flex justify-between text-sm">
+        <span>Images</span>
+        <span x-text="(mvGenStatus.has_images||0) + '/' + (mvGenStatus.total_scenes||0)"></span>
+      </div>
+      <div class="w-full bg-gray-800 rounded-full h-2">
+        <div class="bg-blue-500 h-2 rounded-full" :style="'width:' + ((mvGenStatus.has_images||0)/(mvGenStatus.total_scenes||1)*100) + '%'"></div>
+      </div>
+      <div class="flex justify-between text-sm">
+        <span>Clips</span>
+        <span x-text="(mvGenStatus.has_clips||0) + '/' + (mvGenStatus.total_scenes||0)"></span>
+      </div>
+      <div class="w-full bg-gray-800 rounded-full h-2">
+        <div class="bg-green-500 h-2 rounded-full" :style="'width:' + ((mvGenStatus.has_clips||0)/(mvGenStatus.total_scenes||1)*100) + '%'"></div>
+      </div>
+      <p x-show="mvGenStatus.generating" class="text-xs text-yellow-400 animate-pulse">Generating...</p>
+    </div>
+    <div class="flex gap-2">
+      <button @click="mvStartGenerate()" :disabled="mvGenStatus?.generating"
+              class="flex-1 bg-blue-600 hover:bg-blue-500 py-2 rounded-lg text-sm disabled:opacity-50">
+        <span x-text="mvGenStatus?.generating ? 'Running...' : 'Generate All'"></span>
+      </button>
+      <button @click="mvStep=4" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-lg text-sm">Review →</button>
+    </div>
+  </div>
+
+  <!-- Step 4: Review & Stitch -->
+  <div x-show="mvStep===4" class="space-y-3">
+    <h2 class="font-medium">Review</h2>
+    <button @click="mvDoStitch()" :disabled="mvLoading"
+            class="w-full bg-green-600 hover:bg-green-500 py-2 rounded-lg font-medium text-sm disabled:opacity-50">
+      <span x-text="mvLoading ? 'Stitching...' : 'Stitch Final Video'"></span>
+    </button>
+    <div x-show="mvFinalVideo">
+      <video :src="mvFinalVideo" controls class="w-full rounded-lg"></video>
+      <a :href="mvFinalVideo" download class="inline-block mt-2 text-xs bg-gray-800 px-3 py-1.5 rounded-lg hover:bg-gray-700">Download</a>
+    </div>
+    <div x-show="mvGenStatus?.missing_clips?.length > 0" class="text-xs text-yellow-400">
+      Missing clips: <span x-text="mvGenStatus?.missing_clips?.join(', ')"></span>
+    </div>
+  </div>
+
+</div>
+</template>
+
+</main>
+
+<script>
+function app() {
+  return {
+    mode: 'studio',
+    // Studio
+    presets: {},
+    selectedPreset: null,
+    prompt: '',
+    seed: '',
+    promptGuide: '',
+    uploadedFile: null,
+    generating: false,
+    status: '',
+    result: null,
+    gallery: [],
+    // Music Video
+    mvStep: 0,
+    mvProject: '',
+    mvTitle: '',
+    mvAudioFile: null,
+    mvScenes: [],
+    mvElements: [],
+    mvAddingElement: null,
+    mvNewEl: { id: '', name: '', description: '' },
+    mvGenStatus: null,
+    mvFinalVideo: null,
+    mvLoading: false,
+    mvPollTimer: null,
+
+    async init() {
+      await this.loadPresets();
+      await this.loadGallery();
+    },
+
+    async loadPresets() {
+      this.presets = await fetch('/api/presets').then(r => r.json());
+      if (!this.selectedPreset) {
+        const names = Object.keys(this.presets);
+        if (names.length) this.selectedPreset = names[0];
+      }
+    },
+
+    async loadGallery() {
+      const data = await fetch('/api/outputs?limit=20').then(r => r.json());
+      this.gallery = data.files || [];
+    },
+
+    handleImageUpload(e) {
+      this.uploadedFile = e.target.files[0];
+    },
+
+    viewFile(f) {
+      this.result = { file: f.path };
+    },
+
+    async generate() {
+      this.generating = true;
+      this.status = 'Submitting...';
+      this.result = null;
+      try {
+        const body = { preset: this.selectedPreset, prompt: this.prompt || undefined };
+        if (this.seed) body.seed = parseInt(this.seed);
+
+        const p = this.presets[this.selectedPreset];
+        if (p?.has_image_input && this.uploadedFile) {
+          // Upload image first, then animate
+          const fd = new FormData();
+          fd.append('file', this.uploadedFile);
+          const up = await fetch('/api/upload', { method: 'POST', body: fd }).then(r => r.json());
+          // Use animate endpoint
+          const res = await fetch('/api/animate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image_path: up.output || '', preset: this.selectedPreset, prompt: this.prompt, seed: body.seed })
+          }).then(r => r.json());
+          this.result = res;
+        } else {
+          // Text to image
+          this.status = 'Generating...';
+          const res = await fetch('/api/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          }).then(r => r.json());
+          this.result = res;
+        }
+      } catch (e) {
+        this.status = 'Error: ' + e.message;
+      }
+      this.generating = false;
+      this.status = '';
+      this.loadGallery();
+    },
+
+    // ── Music Video ──
+    async mvPlan() {
+      this.mvLoading = true;
+      const fd = new FormData();
+      fd.append('file', this.mvAudioFile);
+      fd.append('title', this.mvTitle || this.mvProject);
+      const res = await fetch(`/api/mv/${this.mvProject}/plan`, { method: 'POST', body: fd }).then(r => r.json());
+      this.mvScenes = res.scenes || [];
+      this.mvLoading = false;
+      this.mvStep = 1;
+      this.mvLoadElements();
+    },
+
+    async mvLoadElements() {
+      const res = await fetch(`/api/mv/${this.mvProject}/elements`).then(r => r.json());
+      this.mvElements = Object.entries(res).map(([id, v]) => ({ id, ...v }));
+    },
+
+    async mvSaveElement() {
+      await fetch(`/api/mv/${this.mvProject}/elements`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...this.mvNewEl, category: this.mvAddingElement })
+      });
+      this.mvNewEl = { id: '', name: '', description: '' };
+      this.mvAddingElement = null;
+      this.mvLoadElements();
+    },
+
+    async mvGenElement(id) {
+      await fetch(`/api/mv/${this.mvProject}/elements/${id}/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+      this.mvLoadElements();
+    },
+
+    async mvSavePrompts() {
+      await fetch(`/api/mv/${this.mvProject}/prompts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scene_prompts: this.mvScenes.map(s => ({ id: s.id, prompt: s.prompt, motion_prompt: s.motion_prompt })) })
+      });
+    },
+
+    async mvStartGenerate() {
+      await fetch(`/api/mv/${this.mvProject}/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+      this.mvPollStatus();
+    },
+
+    mvPollStatus() {
+      if (this.mvPollTimer) clearInterval(this.mvPollTimer);
+      this.mvPollTimer = setInterval(async () => {
+        this.mvGenStatus = await fetch(`/api/mv/${this.mvProject}/status`).then(r => r.json());
+        if (!this.mvGenStatus.generating) clearInterval(this.mvPollTimer);
+      }, 5000);
+      // Immediate first poll
+      fetch(`/api/mv/${this.mvProject}/status`).then(r => r.json()).then(d => this.mvGenStatus = d);
+    },
+
+    async mvDoStitch() {
+      this.mvLoading = true;
+      const res = await fetch(`/api/mv/${this.mvProject}/stitch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      }).then(r => r.json());
+      if (res.output) this.mvFinalVideo = '/files/' + res.output;
+      this.mvLoading = false;
+    }
+  };
+}
+</script>
+</body>
+</html>

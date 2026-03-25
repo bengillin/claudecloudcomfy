@@ -4,8 +4,11 @@ version = "0.1.0"
 description = "MCP server for Comfy Cloud creative agent"
 requires-python = ">=3.11"
 dependencies = [
+    "fastapi>=0.135.2",
     "mcp[cli]>=1.0.0",
     "openai-whisper>=20250625",
+    "python-multipart>=0.0.22",
+    "uvicorn[standard]>=0.42.0",
 ]
 
 [build-system]
