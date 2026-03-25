@@ -1,5 +1,6 @@
 """Comfy Cloud MCP Server — gives Claude hands for creative generation."""
 
+import functools
 import json
 import os
 import subprocess
@@ -25,20 +26,80 @@ mcp = FastMCP(
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 
+class ComfyError(Exception):
+    """Structured error from comfy.sh with category for agent recovery."""
+
+    def __init__(self, message: str, category: str = "unknown", hint: str = ""):
+        super().__init__(message)
+        self.category = category
+        self.hint = hint
+
+
+def _classify_error(stderr: str, stdout: str) -> tuple[str, str]:
+    """Classify a comfy.sh error into (category, hint) for agent recovery."""
+    text = (stderr + stdout).lower()
+    if "401" in text or "unauthorized" in text or "api key" in text:
+        return "auth", "Check COMFY_API_KEY in .env"
+    if "429" in text or "rate limit" in text:
+        return "rate_limit", "Wait a moment and retry"
+    if "402" in text or "quota" in text or "insufficient" in text:
+        return "quota", "Check Comfy Cloud subscription/credits"
+    if "404" in text or "not found" in text:
+        return "not_found", "Check the resource/endpoint exists"
+    if "timeout" in text:
+        return "timeout", "Job may still be running — check with comfy_job_status"
+    if "upload" in text and ("too large" in text or "size" in text):
+        return "file_too_large", "Reduce file size before uploading"
+    return "unknown", ""
+
+
 def _run_comfy(*args: str, timeout: int = 300) -> str:
     """Run a comfy.sh command and return stdout."""
-    result = subprocess.run(
-        [str(COMFY_SH), *args],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        cwd=str(COMFY_SH.parent),
-        env={**os.environ},
-    )
+    try:
+        result = subprocess.run(
+            [str(COMFY_SH), *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=str(COMFY_SH.parent),
+            env={**os.environ},
+        )
+    except subprocess.TimeoutExpired:
+        raise ComfyError(
+            f"comfy.sh {' '.join(args)} timed out after {timeout}s",
+            category="timeout",
+            hint="Job may still be running — check with comfy_job_status",
+        )
     if result.returncode != 0:
         error = result.stderr.strip() or result.stdout.strip()
-        raise RuntimeError(f"comfy.sh {' '.join(args)} failed: {error}")
+        category, hint = _classify_error(result.stderr, result.stdout)
+        raise ComfyError(
+            f"comfy.sh {' '.join(args)} failed: {error}",
+            category=category,
+            hint=hint,
+        )
     return result.stdout.strip()
+
+
+def _error_json(e: ComfyError) -> str:
+    """Format a ComfyError as structured JSON for the agent."""
+    result = {"status": "error", "error": str(e), "category": e.category}
+    if e.hint:
+        result["hint"] = e.hint
+    return json.dumps(result)
+
+
+def _handle_errors(fn):
+    """Decorator: catch ComfyError and return structured JSON instead of raising."""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except ComfyError as e:
+            return _error_json(e)
+
+    return wrapper
 
 
 def _load_preset(name: str) -> dict:
@@ -141,6 +202,7 @@ Provide your evaluation and recommended next action."""
 
 
 @mcp.tool()
+@_handle_errors
 def comfy_generate(
     preset: str,
     prompt: str | None = None,
@@ -175,6 +237,66 @@ def comfy_generate(
 
 
 @mcp.tool()
+@_handle_errors
+def comfy_submit(
+    preset: str,
+    prompt: str | None = None,
+    seed: int | None = None,
+    image_path: str | None = None,
+    overrides: list[str] | None = None,
+) -> str:
+    """Submit a generation job without waiting. Returns the job ID immediately.
+
+    Use this for parallel generation — submit multiple jobs, then collect
+    results with comfy_job_wait. Works with any preset type (txt2img, img2vid, edit).
+
+    Args:
+        preset: Preset name.
+        prompt: Text prompt for generation.
+        seed: Specific seed for reproducibility. Omit for random.
+        image_path: Source image path (for img2vid/edit presets). Will be uploaded first.
+        overrides: Extra node overrides as "node_id.field=value" strings.
+    """
+    p = _load_preset(preset)
+    wf_file = str(PRESETS_DIR / p["workflow"])
+
+    set_args = []
+    # Set prompt
+    prompt_node = p.get("prompt_node", "")
+    prompt_field = p.get("prompt_field", "")
+    if prompt and prompt_node and prompt_field:
+        set_args.extend(["--set", f"{prompt_node}.{prompt_field}={prompt}"])
+    # Set seed
+    seed_node = p.get("seed_node", "")
+    if seed is not None and seed_node:
+        set_args.extend(["--set", f"{seed_node}.seed={seed}"])
+    # Handle image upload
+    if image_path:
+        image_node = p.get("image_node", "")
+        if image_node:
+            upload_output = _run_comfy("upload", image_path)
+            # Extract uploaded filename from output
+            uploaded = upload_output.strip().splitlines()[-1].strip()
+            set_args.extend(["--set", f"{image_node}.image={uploaded}"])
+    for override in overrides or []:
+        set_args.extend(["--set", override])
+
+    output = _run_comfy("run-with", wf_file, *set_args, timeout=30)
+
+    # Extract prompt_id from JSON response
+    try:
+        resp = json.loads(output)
+        job_id = resp.get("prompt_id", "")
+    except json.JSONDecodeError:
+        job_id = ""
+
+    if not job_id:
+        return json.dumps({"status": "error", "error": "No job ID in response", "output": output})
+    return json.dumps({"status": "submitted", "job_id": job_id})
+
+
+@mcp.tool()
+@_handle_errors
 def comfy_animate(
     image_path: str,
     preset: str,
@@ -210,6 +332,7 @@ def comfy_animate(
 
 
 @mcp.tool()
+@_handle_errors
 def comfy_batch_seed(
     preset: str,
     prompt: str,
@@ -285,6 +408,7 @@ def comfy_list_presets() -> str:
 
 
 @mcp.tool()
+@_handle_errors
 def comfy_upload_image(local_path: str) -> str:
     """Upload a local image to Comfy Cloud for use in workflows.
 
@@ -295,6 +419,7 @@ def comfy_upload_image(local_path: str) -> str:
 
 
 @mcp.tool()
+@_handle_errors
 def comfy_asset_search(
     pattern: str,
     tag: str | None = None,
@@ -320,6 +445,7 @@ def comfy_asset_search(
 
 
 @mcp.tool()
+@_handle_errors
 def comfy_job_list(
     status: str | None = None,
     limit: int | None = None,
@@ -340,6 +466,7 @@ def comfy_job_list(
 
 
 @mcp.tool()
+@_handle_errors
 def comfy_job_status(job_id: str) -> str:
     """Check the current status of a generation job."""
     output = _run_comfy("status", job_id)
@@ -347,6 +474,7 @@ def comfy_job_status(job_id: str) -> str:
 
 
 @mcp.tool()
+@_handle_errors
 def comfy_job_wait(
     job_id: str,
     output_dir: str | None = None,
@@ -368,6 +496,7 @@ def comfy_job_wait(
 
 
 @mcp.tool()
+@_handle_errors
 def comfy_cancel_jobs(job_ids: list[str]) -> str:
     """Cancel one or more pending jobs.
 
@@ -379,6 +508,7 @@ def comfy_cancel_jobs(job_ids: list[str]) -> str:
 
 
 @mcp.tool()
+@_handle_errors
 def comfy_download(
     filename: str,
     output_dir: str | None = None,
@@ -410,6 +540,7 @@ def comfy_download(
 
 
 @mcp.tool()
+@_handle_errors
 def comfy_run_workflow(
     workflow_path: str,
     overrides: list[str] | None = None,

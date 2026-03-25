@@ -12,6 +12,9 @@ from mcp_server.server import (
     _list_preset_names,
     _parse_saved_files,
     _run_comfy,
+    _classify_error,
+    _error_json,
+    ComfyError,
     mcp,
 )
 
@@ -93,7 +96,7 @@ def test_run_comfy_help():
 
 
 def test_run_comfy_failure():
-    with pytest.raises(RuntimeError, match="failed"):
+    with pytest.raises(ComfyError, match="failed"):
         _run_comfy("totally-bogus-command-that-does-not-exist")
 
 
@@ -102,7 +105,7 @@ def test_run_comfy_failure():
 
 def test_mcp_has_tools():
     tools = mcp._tool_manager._tools
-    assert len(tools) == 17
+    assert len(tools) == 18
 
 
 def test_mcp_expected_tools_registered():
@@ -110,6 +113,7 @@ def test_mcp_expected_tools_registered():
     expected = {
         "comfy_generate",
         "comfy_animate",
+        "comfy_submit",
         "comfy_batch_seed",
         "comfy_list_presets",
         "comfy_upload_image",
@@ -240,3 +244,64 @@ def test_project_lifecycle(tmp_path):
         # Not found
         result = json.loads(comfy_project_status(name="nope"))
         assert "error" in result
+
+
+# ── Error classification ─────────────────────────────────────────────
+
+
+def test_classify_error_auth():
+    cat, hint = _classify_error("401 Unauthorized", "")
+    assert cat == "auth"
+
+
+def test_classify_error_rate_limit():
+    cat, hint = _classify_error("429 Too Many Requests", "")
+    assert cat == "rate_limit"
+
+
+def test_classify_error_quota():
+    cat, hint = _classify_error("402 insufficient credits", "")
+    assert cat == "quota"
+
+
+def test_classify_error_not_found():
+    cat, hint = _classify_error("404 Not Found", "")
+    assert cat == "not_found"
+
+
+def test_classify_error_unknown():
+    cat, hint = _classify_error("something weird happened", "")
+    assert cat == "unknown"
+
+
+def test_error_json_format():
+    e = ComfyError("test error", category="rate_limit", hint="wait and retry")
+    result = json.loads(_error_json(e))
+    assert result["status"] == "error"
+    assert result["category"] == "rate_limit"
+    assert result["hint"] == "wait and retry"
+    assert "test error" in result["error"]
+
+
+def test_handle_errors_catches_comfy_error():
+    """Tools with @_handle_errors return JSON instead of raising."""
+    from mcp_server.server import comfy_generate
+    with patch("mcp_server.server._run_comfy", side_effect=ComfyError("boom", "auth", "check key")):
+        result = json.loads(comfy_generate(preset="z-turbo", prompt="test"))
+        assert result["status"] == "error"
+        assert result["category"] == "auth"
+
+
+# ── Async submit ─────────────────────────────────────────────────────
+
+
+@patch("mcp_server.server._run_comfy")
+def test_comfy_submit_returns_job_id(mock_run):
+    mock_run.return_value = '{"prompt_id": "abc-123"}'
+    from mcp_server.server import comfy_submit
+    result = json.loads(comfy_submit(preset="z-turbo", prompt="a cat", seed=42))
+    assert result["status"] == "submitted"
+    assert result["job_id"] == "abc-123"
+    # Verify it used run-with (submit-only, no poll)
+    call_args = mock_run.call_args[0]
+    assert "run-with" in call_args

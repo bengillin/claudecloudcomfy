@@ -58,7 +58,8 @@ Claude will create a project, generate and evaluate each step, and log everythin
 
 | Tool | Description |
 |------|-------------|
-| `comfy_generate` | Generate image from preset + prompt |
+| `comfy_generate` | Generate image from preset + prompt (blocks until done) |
+| `comfy_submit` | Submit job and return immediately (for parallel generation) |
 | `comfy_animate` | Image → video with img2vid preset |
 | `comfy_batch_seed` | Sweep seeds for variations |
 | `comfy_list_presets` | Discover presets with capabilities |
@@ -205,7 +206,7 @@ Export any workflow from ComfyUI Cloud as API-format JSON, then:
 | File/Dir | Description |
 |----------|-------------|
 | `comfy.sh` | CLI — every API endpoint + gen, animate, batch, presets, monitoring |
-| `mcp_server/server.py` | FastMCP server — 17 tools, 2 resources, 2 prompts |
+| `mcp_server/server.py` | FastMCP server — 18 tools, 2 resources, 2 prompts |
 | `mcp_server/config.py` | Path resolution + .env loading for MCP server |
 | `pyproject.toml` | Python project config (uv, mcp dependency) |
 | `workflows/` | 5 official ComfyUI Cloud workflow JSONs (all verified) |

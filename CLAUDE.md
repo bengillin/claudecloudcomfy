@@ -5,7 +5,7 @@ A bash CLI (`comfy.sh`) wrapping the Comfy Cloud API, with an MCP server that tu
 
 ## Architecture
 - `comfy.sh` — battle-tested execution engine (bash CLI, don't modify unless necessary)
-- `mcp_server/server.py` — FastMCP server wrapping comfy.sh with 17 tools
+- `mcp_server/server.py` — FastMCP server wrapping comfy.sh with 18 tools
 - `presets/*.json` — preset configs with prompt guides and capabilities
 - `projects/` — persistent creative project tracking
 
