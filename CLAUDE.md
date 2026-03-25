@@ -38,6 +38,18 @@ multiple jobs without blocking, then collect results with `comfy_job_wait`:
 - `qwen-edit` — instruction-based image editing
 - `multi-angles` — 8-angle rerender from single image
 
+## Music Video Pipeline
+When given a song file:
+1. Call `comfy_mv_plan` → transcribe + build storyboard with timed scenes
+2. Review scenes, then call `comfy_mv_set_prompts` with visual + motion prompts per scene
+3. Call `comfy_mv_generate` → generates images (z-turbo 1280x720), splits audio, runs LTX 2.3 a2v
+4. Call `comfy_mv_status` to check progress and find failures
+5. Retry failed scenes: `comfy_mv_generate(scenes=[29])` to regenerate specific ones
+6. Call `comfy_mv_stitch` → concatenates clips + overlays original audio track
+7. View output, refine prompts, regenerate scenes as needed
+
+Preset `ltx23-a2v` is the audio-conditioned variant: image + audio segment → video synced to music.
+
 ## Development
 - Python managed with `uv` (pyproject.toml)
 - MCP server: `uv run python -m mcp_server.server`
