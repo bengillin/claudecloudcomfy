@@ -715,7 +715,285 @@ def comfy_project_status(name: str) -> str:
     return pfile.read_text()
 
 
-# ── MCP Tools: Music Video ───────────────────────────────────────────────
+# ── MCP Tools: Music Video — World Building ──────────────────────────────
+
+
+@mcp.tool()
+@_handle_errors
+def comfy_mv_add_element(
+    project_name: str,
+    element_id: str,
+    category: str,
+    name: str,
+    description: str,
+    source_images: list[str] | None = None,
+    seed: int = 42,
+) -> str:
+    """Add a world element (character, location, prop, mood) to the project.
+
+    Elements are reusable across scenes. Each element can have:
+    - User-provided source images (photos, sketches, references)
+    - Generated reference images (created with comfy_mv_generate_element)
+    - A detailed visual description for prompt composition
+
+    Categories follow the 5W framework:
+    - who: Characters and subjects
+    - what: Actions, props, key objects
+    - when: Time period, lighting, atmosphere
+    - where: Locations and environments
+    - why: Mood, emotion, theme
+
+    Args:
+        project_name: Project directory name.
+        element_id: Unique slug (e.g. "afroman", "courtroom", "night-raid").
+        category: One of: who, what, when, where, why.
+        name: Display name (e.g. "Afroman", "The Courtroom").
+        description: Detailed visual description for generation.
+        source_images: Optional list of user-provided image paths.
+        seed: Seed for reference image generation.
+    """
+    from .music_video import Storyboard, WorldElement
+
+    project_dir = PROJECTS_DIR / project_name
+    sb_path = project_dir / "storyboard.json"
+    if not sb_path.exists():
+        return json.dumps({"error": f"Project '{project_name}' not found"})
+
+    sb = Storyboard.load(sb_path)
+
+    # Check for duplicate
+    if sb.get_element(element_id):
+        return json.dumps({"error": f"Element '{element_id}' already exists"})
+
+    # Copy source images to project
+    elements_dir = project_dir / "elements" / element_id
+    elements_dir.mkdir(parents=True, exist_ok=True)
+    copied_sources = []
+    for src in source_images or []:
+        src_path = Path(src)
+        if src_path.exists():
+            import shutil
+            dest = elements_dir / f"source_{src_path.name}"
+            shutil.copy2(str(src_path), str(dest))
+            copied_sources.append(str(dest))
+
+    element = WorldElement(
+        id=element_id,
+        category=category,
+        name=name,
+        description=description,
+        source_images=copied_sources,
+        seed=seed,
+    )
+    sb.elements.append(element)
+    sb.save(sb_path)
+
+    return json.dumps({
+        "status": "added",
+        "element": element_id,
+        "category": category,
+        "source_images": len(copied_sources),
+    })
+
+
+@mcp.tool()
+@_handle_errors
+def comfy_mv_generate_element(
+    project_name: str,
+    element_id: str,
+    prompt: str | None = None,
+    use_source: bool = True,
+    multi_angle: bool = False,
+    seed: int | None = None,
+) -> str:
+    """Generate reference images for a world element.
+
+    Three modes:
+    1. Text-only: Generate from the element's description (no source images)
+    2. Edit from source: Use qwen-edit to transform a source image based on instructions
+    3. Multi-angle: Use multi-angles preset to generate 8 views from a source/generated image
+
+    Generated images are saved as approved references for the element.
+    View them to approve, then they'll be used in scene image generation.
+
+    Args:
+        project_name: Project directory name.
+        element_id: Which element to generate references for.
+        prompt: Override prompt. Defaults to element description.
+        use_source: If True and source images exist, use qwen-edit from source. If False, generate from text.
+        multi_angle: If True, generate 8 camera angles from the first reference/source image.
+        seed: Override seed.
+    """
+    import shutil
+    from .music_video import Storyboard
+
+    project_dir = PROJECTS_DIR / project_name
+    sb_path = project_dir / "storyboard.json"
+    if not sb_path.exists():
+        return json.dumps({"error": f"Project '{project_name}' not found"})
+
+    sb = Storyboard.load(sb_path)
+    element = sb.get_element(element_id)
+    if not element:
+        return json.dumps({"error": f"Element '{element_id}' not found"})
+
+    elements_dir = project_dir / "elements" / element_id
+    elements_dir.mkdir(parents=True, exist_ok=True)
+    gen_seed = seed if seed is not None else element.seed
+    gen_prompt = prompt or element.description
+
+    results = []
+
+    if multi_angle:
+        # Need an existing image to create angles from
+        source = None
+        if element.reference_images:
+            source = element.reference_images[0]
+        elif element.source_images:
+            source = element.source_images[0]
+        if not source or not Path(source).exists():
+            return json.dumps({"error": "multi_angle requires an existing reference or source image"})
+
+        output = _run_comfy(
+            "animate", source, "--preset=multi-angles",
+            f"--seed={gen_seed}",
+        )
+        saved = _find_saved_file(output)
+        if saved:
+            dest = elements_dir / f"ref_angles_{gen_seed}.png"
+            shutil.copy2(saved, str(dest))
+            element.reference_images.append(str(dest))
+            results.append(str(dest))
+
+    elif use_source and element.source_images:
+        # Use qwen-edit to transform source image
+        source = element.source_images[0]
+        if not Path(source).exists():
+            return json.dumps({"error": f"Source image not found: {source}"})
+
+        output = _run_comfy(
+            "animate", source, "--preset=qwen-edit",
+            "--prompt", gen_prompt,
+            f"--seed={gen_seed}",
+        )
+        saved = _find_saved_file(output)
+        if saved:
+            dest = elements_dir / f"ref_edit_{gen_seed}.png"
+            shutil.copy2(saved, str(dest))
+            element.reference_images.append(str(dest))
+            results.append(str(dest))
+
+    else:
+        # Generate from text with z-turbo
+        # Category-specific framing
+        framing = {
+            "who": "Character portrait, medium close-up, face clearly visible",
+            "what": "Dynamic shot, clear detail",
+            "when": "Atmospheric establishing shot",
+            "where": "Wide establishing shot, full environment visible",
+            "why": "Abstract mood board, emotional atmosphere",
+        }.get(element.category, "")
+
+        full_prompt = f"{framing}, {gen_prompt}" if framing else gen_prompt
+        output = _run_comfy(
+            "gen", "--preset=z-turbo",
+            "--prompt", full_prompt,
+            f"--seed={gen_seed}",
+            "--set", f"57:13.width={1280}",
+            "--set", f"57:13.height={720}",
+        )
+        saved = _find_saved_file(output)
+        if saved:
+            dest = elements_dir / f"ref_gen_{gen_seed}.png"
+            shutil.copy2(saved, str(dest))
+            element.reference_images.append(str(dest))
+            results.append(str(dest))
+
+    sb.save(sb_path)
+
+    return json.dumps({
+        "status": "generated",
+        "element": element_id,
+        "references": results,
+        "total_references": len(element.reference_images),
+    })
+
+
+@mcp.tool()
+def comfy_mv_list_elements(project_name: str) -> str:
+    """List all world elements in a music video project with their reference status.
+
+    Args:
+        project_name: Project directory name.
+    """
+    from .music_video import Storyboard
+
+    project_dir = PROJECTS_DIR / project_name
+    sb_path = project_dir / "storyboard.json"
+    if not sb_path.exists():
+        return json.dumps({"error": f"Project '{project_name}' not found"})
+
+    sb = Storyboard.load(sb_path)
+    result = {}
+    for e in sb.elements:
+        result[e.id] = {
+            "category": e.category,
+            "name": e.name,
+            "description": e.description[:100],
+            "source_images": len(e.source_images),
+            "reference_images": len(e.reference_images),
+            "reference_paths": e.reference_images,
+        }
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def comfy_mv_update_element(
+    project_name: str,
+    element_id: str,
+    description: str | None = None,
+    name: str | None = None,
+    remove_reference: str | None = None,
+) -> str:
+    """Update a world element's description, name, or remove a reference image.
+
+    Use after viewing generated references to refine the element.
+
+    Args:
+        project_name: Project directory name.
+        element_id: Element to update.
+        description: New visual description.
+        name: New display name.
+        remove_reference: Path of a reference image to remove (didn't look right).
+    """
+    from .music_video import Storyboard
+
+    project_dir = PROJECTS_DIR / project_name
+    sb_path = project_dir / "storyboard.json"
+    if not sb_path.exists():
+        return json.dumps({"error": f"Project '{project_name}' not found"})
+
+    sb = Storyboard.load(sb_path)
+    element = sb.get_element(element_id)
+    if not element:
+        return json.dumps({"error": f"Element '{element_id}' not found"})
+
+    if description is not None:
+        element.description = description
+    if name is not None:
+        element.name = name
+    if remove_reference and remove_reference in element.reference_images:
+        element.reference_images.remove(remove_reference)
+
+    sb.save(sb_path)
+    return json.dumps({
+        "status": "updated",
+        "element": element_id,
+        "reference_count": len(element.reference_images),
+    })
+
+
+# ── MCP Tools: Music Video — Pipeline ───────────────────────────────────
 
 
 @mcp.tool()

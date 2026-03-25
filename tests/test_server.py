@@ -107,7 +107,7 @@ def test_run_comfy_failure():
 
 def test_mcp_has_tools():
     tools = mcp._tool_manager._tools
-    assert len(tools) == 23
+    assert len(tools) == 27
 
 
 def test_mcp_expected_tools_registered():
@@ -131,6 +131,10 @@ def test_mcp_expected_tools_registered():
         "comfy_project_list",
         "comfy_project_log",
         "comfy_project_status",
+        "comfy_mv_add_element",
+        "comfy_mv_generate_element",
+        "comfy_mv_list_elements",
+        "comfy_mv_update_element",
         "comfy_mv_plan",
         "comfy_mv_set_prompts",
         "comfy_mv_generate",

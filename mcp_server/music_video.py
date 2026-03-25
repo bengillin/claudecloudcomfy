@@ -14,6 +14,25 @@ VIDEO_FPS = 25
 
 
 @dataclass
+class WorldElement:
+    """A reusable visual element in the music video world."""
+    id: str                    # unique slug, e.g. "afroman", "courtroom"
+    category: str              # who, what, when, where, why
+    name: str                  # display name
+    description: str           # detailed visual description for generation
+    reference_images: list[str] = field(default_factory=list)  # paths to approved images
+    source_images: list[str] = field(default_factory=list)     # user-provided input images
+    seed: int = 0
+
+
+@dataclass
+class SceneElementRef:
+    """A reference from a scene to a world element, with optional override."""
+    element_id: str
+    override_description: str = ""  # scene-specific variation
+
+
+@dataclass
 class Scene:
     """A single scene in the music video."""
     id: int
@@ -21,6 +40,7 @@ class Scene:
     end: float             # seconds
     text: str              # lyrics for this segment
     segment_type: str      # verse, chorus, bridge, intro, outro, instrumental
+    element_refs: list[dict] = field(default_factory=list)  # SceneElementRef as dicts
     prompt: str = ""       # visual prompt for image generation
     motion_prompt: str = ""  # motion/camera prompt for animation
     image_path: str = ""   # generated scene image
@@ -44,8 +64,9 @@ class Storyboard:
     audio_path: str
     duration: float
     scenes: list[Scene] = field(default_factory=list)
-    world_elements: dict = field(default_factory=dict)
+    elements: list[WorldElement] = field(default_factory=list)
     camera_style: str = ""
+    global_style: str = ""
 
     def save(self, path: Path):
         data = {
@@ -53,7 +74,8 @@ class Storyboard:
             "audio_path": self.audio_path,
             "duration": self.duration,
             "camera_style": self.camera_style,
-            "world_elements": self.world_elements,
+            "global_style": self.global_style,
+            "elements": [asdict(e) for e in self.elements],
             "scenes": [asdict(s) for s in self.scenes],
         }
         path.write_text(json.dumps(data, indent=2))
@@ -62,7 +84,16 @@ class Storyboard:
     def load(cls, path: Path) -> "Storyboard":
         data = json.loads(path.read_text())
         scenes = [Scene(**s) for s in data.pop("scenes", [])]
-        return cls(**data, scenes=scenes)
+        elements = [WorldElement(**e) for e in data.pop("elements", [])]
+        # Backward compat: old storyboards had world_elements as dict
+        data.pop("world_elements", None)
+        return cls(**data, scenes=scenes, elements=elements)
+
+    def get_element(self, element_id: str) -> WorldElement | None:
+        for e in self.elements:
+            if e.id == element_id:
+                return e
+        return None
 
 
 # ── Step 1: Transcribe ──────────────────────────────────────────────────
