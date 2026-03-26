@@ -299,27 +299,47 @@
   </div>
 
   <!-- Step 3: Generate -->
-  <div x-show="mvStep===3" class="space-y-3">
+  <div x-show="mvStep===3" x-init="if(mvProject) mvPollStatus()" class="space-y-3">
     <h2 class="font-medium">Generate</h2>
-    <div x-show="mvGenStatus" class="bg-gray-900 rounded-lg p-4 border border-gray-800 space-y-2">
+
+    <!-- Progress -->
+    <div class="bg-gray-900 rounded-lg p-4 border border-gray-800 space-y-2">
       <div class="flex justify-between text-sm">
-        <span>Images</span>
-        <span x-text="(mvGenStatus.has_images||0) + '/' + (mvGenStatus.total_scenes||0)"></span>
+        <span>Prompts</span>
+        <span x-text="(mvGenStatus?.has_prompts||0) + '/' + (mvGenStatus?.total_scenes||mvScenes?.length||'?')"></span>
       </div>
       <div class="w-full bg-gray-800 rounded-full h-2">
-        <div class="bg-blue-500 h-2 rounded-full" :style="'width:' + ((mvGenStatus.has_images||0)/(mvGenStatus.total_scenes||1)*100) + '%'"></div>
+        <div class="bg-purple-500 h-2 rounded-full transition-all" :style="'width:' + ((mvGenStatus?.has_prompts||0)/Math.max(mvGenStatus?.total_scenes||mvScenes?.length||1,1)*100) + '%'"></div>
+      </div>
+      <div class="flex justify-between text-sm">
+        <span>Images</span>
+        <span x-text="(mvGenStatus?.has_images||0) + '/' + (mvGenStatus?.total_scenes||mvScenes?.length||'?')"></span>
+      </div>
+      <div class="w-full bg-gray-800 rounded-full h-2">
+        <div class="bg-blue-500 h-2 rounded-full transition-all" :style="'width:' + ((mvGenStatus?.has_images||0)/Math.max(mvGenStatus?.total_scenes||mvScenes?.length||1,1)*100) + '%'"></div>
+      </div>
+      <div class="flex justify-between text-sm">
+        <span>Audio</span>
+        <span x-text="(mvGenStatus?.has_audio||0) + '/' + (mvGenStatus?.total_scenes||mvScenes?.length||'?')"></span>
+      </div>
+      <div class="w-full bg-gray-800 rounded-full h-2">
+        <div class="bg-yellow-500 h-2 rounded-full transition-all" :style="'width:' + ((mvGenStatus?.has_audio||0)/Math.max(mvGenStatus?.total_scenes||mvScenes?.length||1,1)*100) + '%'"></div>
       </div>
       <div class="flex justify-between text-sm">
         <span>Clips</span>
-        <span x-text="(mvGenStatus.has_clips||0) + '/' + (mvGenStatus.total_scenes||0)"></span>
+        <span x-text="(mvGenStatus?.has_clips||0) + '/' + (mvGenStatus?.total_scenes||mvScenes?.length||'?')"></span>
       </div>
       <div class="w-full bg-gray-800 rounded-full h-2">
-        <div class="bg-green-500 h-2 rounded-full" :style="'width:' + ((mvGenStatus.has_clips||0)/(mvGenStatus.total_scenes||1)*100) + '%'"></div>
+        <div class="bg-green-500 h-2 rounded-full transition-all" :style="'width:' + ((mvGenStatus?.has_clips||0)/Math.max(mvGenStatus?.total_scenes||mvScenes?.length||1,1)*100) + '%'"></div>
       </div>
-      <p x-show="mvGenStatus.generating" class="text-xs text-yellow-400 animate-pulse">Generating...</p>
+      <p x-show="mvGenStatus?.generating" class="text-xs text-yellow-400 animate-pulse">Generating...</p>
+      <p x-show="mvGenStatus?.missing_clips?.length > 0 && !mvGenStatus?.generating" class="text-xs text-gray-500">
+        Missing clips: <span x-text="mvGenStatus?.missing_clips?.join(', ')"></span>
+      </p>
     </div>
+
     <div class="flex gap-2">
-      <button @click="mvStartGenerate()" :disabled="mvGenStatus?.generating"
+      <button @click="mvSavePrompts(); mvStartGenerate()" :disabled="mvGenStatus?.generating"
               class="flex-1 bg-blue-600 hover:bg-blue-500 py-2 rounded-lg text-sm disabled:opacity-50">
         <span x-text="mvGenStatus?.generating ? 'Running...' : 'Generate All'"></span>
       </button>
