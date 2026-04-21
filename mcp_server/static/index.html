@@ -241,21 +241,22 @@
     <!-- Creative Brief editor (collapsible) -->
     <div class="bg-gray-900 rounded-lg border border-gray-800">
       <button @click="mvBriefOpen = !mvBriefOpen" class="w-full flex items-center justify-between p-3 text-left">
-        <div>
+        <div class="flex items-center gap-2">
           <span class="text-sm font-medium">Creative brief</span>
-          <span class="text-xs text-gray-500 ml-2">narrative · mood · style · palette · camera</span>
+          <span class="text-xs text-gray-500">narrative · mood · style · palette · camera</span>
+          <span x-show="mvBriefSaving" class="text-xs text-green-400 animate-pulse">saving…</span>
         </div>
         <span x-text="mvBriefOpen ? '&#9650;' : '&#9660;'" class="text-gray-500"></span>
       </button>
       <div x-show="mvBriefOpen" class="p-3 pt-0 space-y-2 border-t border-gray-800">
-        <textarea x-model="mvBrief.narrative" placeholder="Narrative — the story arc" rows="2" class="w-full bg-gray-950 border border-gray-800 rounded p-2 text-xs resize-none"></textarea>
-        <textarea x-model="mvBrief.mood" placeholder="Mood — emotional tone" rows="1" class="w-full bg-gray-950 border border-gray-800 rounded p-2 text-xs resize-none"></textarea>
-        <textarea x-model="mvBrief.visual_style" placeholder="Visual style — look, film stock, references" rows="2" class="w-full bg-gray-950 border border-gray-800 rounded p-2 text-xs resize-none"></textarea>
-        <textarea x-model="mvBrief.color_palette" placeholder="Color palette" rows="1" class="w-full bg-gray-950 border border-gray-800 rounded p-2 text-xs resize-none"></textarea>
-        <textarea x-model="mvBrief.camera_style" placeholder="Camera style" rows="1" class="w-full bg-gray-950 border border-gray-800 rounded p-2 text-xs resize-none"></textarea>
-        <textarea x-model="mvBrief.global_style" placeholder="Global style (applied to all generations)" rows="1" class="w-full bg-gray-950 border border-gray-800 rounded p-2 text-xs resize-none"></textarea>
-        <textarea x-model="mvBrief.notes" placeholder="Notes" rows="1" class="w-full bg-gray-950 border border-gray-800 rounded p-2 text-xs resize-none"></textarea>
-        <button @click="mvSaveBrief()" class="w-full bg-blue-600 hover:bg-blue-500 py-1.5 rounded text-xs">Save brief</button>
+        <textarea x-model="mvBrief.narrative" @blur="mvSaveBrief()" placeholder="Narrative — the story arc" rows="2" class="w-full bg-gray-950 border border-gray-800 rounded p-2 text-xs resize-none"></textarea>
+        <textarea x-model="mvBrief.mood" @blur="mvSaveBrief()" placeholder="Mood — emotional tone" rows="1" class="w-full bg-gray-950 border border-gray-800 rounded p-2 text-xs resize-none"></textarea>
+        <textarea x-model="mvBrief.visual_style" @blur="mvSaveBrief()" placeholder="Visual style — look, film stock, references" rows="2" class="w-full bg-gray-950 border border-gray-800 rounded p-2 text-xs resize-none"></textarea>
+        <textarea x-model="mvBrief.color_palette" @blur="mvSaveBrief()" placeholder="Color palette" rows="1" class="w-full bg-gray-950 border border-gray-800 rounded p-2 text-xs resize-none"></textarea>
+        <textarea x-model="mvBrief.camera_style" @blur="mvSaveBrief()" placeholder="Camera style" rows="1" class="w-full bg-gray-950 border border-gray-800 rounded p-2 text-xs resize-none"></textarea>
+        <textarea x-model="mvBrief.global_style" @blur="mvSaveBrief()" placeholder="Global style (applied to all generations)" rows="1" class="w-full bg-gray-950 border border-gray-800 rounded p-2 text-xs resize-none"></textarea>
+        <textarea x-model="mvBrief.notes" @blur="mvSaveBrief()" placeholder="Notes" rows="1" class="w-full bg-gray-950 border border-gray-800 rounded p-2 text-xs resize-none"></textarea>
+        <p class="text-xs text-gray-500 italic">Auto-saves on blur.</p>
       </div>
     </div>
 
@@ -290,7 +291,10 @@
                     <input type="file" accept="image/*" multiple @change="mvUploadSourceImages(el.id, $event)" class="hidden">
                     Upload
                   </label>
-                  <button @click="mvGenElement(el.id)" class="text-xs text-blue-400 hover:text-blue-300">Generate</button>
+                  <button @click="mvGenElement(el.id)" :disabled="mvGeneratingElement[el.id]"
+                          class="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50 disabled:text-gray-500">
+                    <span x-text="mvGeneratingElement[el.id] ? 'Generating…' : 'Generate'"></span>
+                  </button>
                 </div>
               </div>
               <!-- Editable description -->
@@ -328,7 +332,37 @@
 
   <!-- Step 2: Scene Prompts -->
   <div x-show="mvStep===2" class="space-y-3">
-    <h2 class="font-medium">Scenes <span class="text-gray-500 text-sm" x-text="mvScenes?.length + ' clips'"></span></h2>
+    <h2 class="font-medium">Scenes <span class="text-gray-500 text-sm" x-text="mvScenes?.length + ' clips · ' + mvSongDuration().toFixed(1) + 's'"></span></h2>
+
+    <!-- Scene timeline — click a segment to jump to its card -->
+    <div x-show="mvScenes?.length" class="bg-gray-900 rounded-lg border border-gray-800 p-2 space-y-1">
+      <svg class="w-full h-10" viewBox="0 0 1000 40" preserveAspectRatio="none">
+        <rect x="0" y="18" width="1000" height="4" fill="#1f2937" />
+        <template x-for="scene in mvScenes || []" :key="scene.id">
+          <g class="cursor-pointer" @click="mvScrollToScene(scene.id)">
+            <rect :x="(scene.start / mvSongDuration()) * 1000"
+                  :width="Math.max(1, ((scene.end - scene.start) / mvSongDuration()) * 1000 - 1)"
+                  y="8" height="24"
+                  :fill="mvSceneColor(scene)"
+                  :opacity="mvRetrying[scene.id] ? 0.4 : 0.85">
+              <title x-text="'Scene ' + scene.id + ' · ' + scene.start.toFixed(1) + '–' + scene.end.toFixed(1) + 's · ' + scene.segment_type"></title>
+            </rect>
+            <text :x="(scene.start / mvSongDuration()) * 1000 + 2" y="24"
+                  class="text-[8px] fill-black font-bold pointer-events-none"
+                  x-text="scene.id"></text>
+          </g>
+        </template>
+      </svg>
+      <div class="flex items-center justify-between text-[10px] text-gray-500 px-1">
+        <div class="flex gap-3">
+          <span class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded" style="background:#374151"></span>empty</span>
+          <span class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded" style="background:#3b82f6"></span>prompt</span>
+          <span class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded" style="background:#eab308"></span>image</span>
+          <span class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded" style="background:#16a34a"></span>clip</span>
+        </div>
+        <span x-text="mvSongDuration().toFixed(1) + 's'"></span>
+      </div>
+    </div>
 
     <!-- Saved-prompts warning banner (from set_prompts) -->
     <template x-for="w in mvPromptsWarnings || []" :key="w.type">
@@ -350,7 +384,7 @@
 
     <div class="space-y-2">
       <template x-for="scene in mvScenes || []" :key="scene.id">
-        <div class="bg-gray-900 rounded-lg p-3 border border-gray-800">
+        <div :id="'mv-scene-' + scene.id" class="bg-gray-900 rounded-lg p-3 border border-gray-800 scroll-mt-20">
           <div class="flex items-center gap-2 mb-1 flex-wrap">
             <span class="text-xs bg-gray-800 px-2 py-0.5 rounded" x-text="scene.start.toFixed(1) + 's - ' + scene.end.toFixed(1) + 's'"></span>
             <span class="text-xs text-gray-500" x-text="scene.segment_type"></span>
@@ -368,9 +402,13 @@
           </div>
           <p class="text-xs text-gray-400 mb-2 line-clamp-2" x-text="scene.text"></p>
 
-          <!-- Scene thumbnail (shown once images exist) -->
-          <div x-show="scene.image_path" class="mb-2">
+          <!-- Scene thumbnail (shown once images exist) + per-scene regen -->
+          <div x-show="scene.image_path" class="mb-2 flex items-start gap-2">
             <img :src="'/files/' + scene.image_path" class="h-24 rounded object-cover cursor-pointer" @click="viewFile({path: scene.image_path})">
+            <button @click="mvRetryScene(scene.id)" :disabled="mvRetrying[scene.id]"
+                    class="text-xs bg-gray-800 hover:bg-gray-700 px-2 py-1 rounded disabled:opacity-50">
+              <span x-text="mvRetrying[scene.id] ? 'Regenerating…' : '&#8635; Regen'"></span>
+            </button>
           </div>
 
           <!-- Element tags -->
@@ -602,6 +640,8 @@ function app() {
     mvBriefOpen: false,
     mvRefGallery: null,        // { elementId, paths: [], index }
     mvRetrying: {},            // {sceneId: true} while a retry is in flight
+    mvGeneratingElement: {},   // {elementId: true} while element ref gen in flight
+    mvBriefSaving: false,      // brief auto-save indicator
 
     async init() {
       try {
@@ -732,23 +772,33 @@ function app() {
     },
 
     async mvGenElement(id) {
-      await fetch(`/api/mv/${this.mvProject}/elements/${id}/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
-      });
-      this.mvLoadElements();
+      this.mvGeneratingElement[id] = true;
+      try {
+        await fetch(`/api/mv/${this.mvProject}/elements/${id}/generate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+        await this.mvLoadElements();
+      } finally {
+        this.mvGeneratingElement[id] = false;
+      }
     },
 
     async mvGenAllElements() {
       this.mvLoading = true;
       for (const el of this.mvElements) {
         if ((el.reference_images || 0) === 0) {
-          await fetch(`/api/mv/${this.mvProject}/elements/${el.id}/generate`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({})
-          });
+          this.mvGeneratingElement[el.id] = true;
+          try {
+            await fetch(`/api/mv/${this.mvProject}/elements/${el.id}/generate`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({})
+            });
+          } finally {
+            this.mvGeneratingElement[el.id] = false;
+          }
         }
       }
       await this.mvLoadElements();
@@ -858,19 +908,26 @@ function app() {
     },
 
     async mvSaveBrief() {
-      await fetch(`/api/mv/${this.mvProject}/brief`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          narrative: this.mvBrief.narrative,
-          mood: this.mvBrief.mood,
-          visual_style: this.mvBrief.visual_style,
-          color_palette: this.mvBrief.color_palette,
-          camera_style: this.mvBrief.camera_style,
-          global_style: this.mvBrief.global_style,
-          notes: this.mvBrief.notes,
-        })
-      });
+      if (!this.mvProject) return;
+      this.mvBriefSaving = true;
+      try {
+        await fetch(`/api/mv/${this.mvProject}/brief`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            narrative: this.mvBrief.narrative,
+            mood: this.mvBrief.mood,
+            visual_style: this.mvBrief.visual_style,
+            color_palette: this.mvBrief.color_palette,
+            camera_style: this.mvBrief.camera_style,
+            global_style: this.mvBrief.global_style,
+            notes: this.mvBrief.notes,
+          })
+        });
+      } finally {
+        // Keep the "saved" pulse visible for a beat before clearing.
+        setTimeout(() => { this.mvBriefSaving = false; }, 600);
+      }
     },
 
     mvRefCountForScene(scene) {
@@ -912,6 +969,9 @@ function app() {
     },
 
     async mvRetryScene(sceneId) {
+      // Clear local thumbnails so the poller picks up the new ones.
+      const scene = this.mvScenes.find(s => s.id === sceneId);
+      if (scene) { scene.image_path = ''; scene.video_path = ''; }
       this.mvRetrying[sceneId] = true;
       await fetch(`/api/mv/${this.mvProject}/generate`, {
         method: 'POST',
@@ -923,6 +983,25 @@ function app() {
     },
 
     mvDismissPlanResult() { this.mvPlanResult = null; },
+
+    mvSongDuration() {
+      if (this.mvPlanResult?.duration) return this.mvPlanResult.duration;
+      if (this.mvScenes?.length) return Math.max(...this.mvScenes.map(s => s.end || 0));
+      return 1;
+    },
+
+    mvSceneColor(scene) {
+      // Matches the readiness cascade: clip > image > prompt > empty.
+      if (scene.video_path) return '#16a34a';
+      if (scene.image_path) return '#eab308';
+      if (scene.prompt) return '#3b82f6';
+      return '#374151';
+    },
+
+    mvScrollToScene(id) {
+      const el = document.getElementById('mv-scene-' + id);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    },
   };
 }
 </script>
