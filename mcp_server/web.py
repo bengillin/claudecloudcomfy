@@ -47,8 +47,10 @@ from .server import (
 app = FastAPI(title="Comfy Cloud Studio")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# Track running MV generations
-_running: set[str] = set()
+# Per-project state: running flag + last comfy_mv_generate result (warnings, failed, counts).
+# Persists across the fire-and-forget /api/mv/{project}/generate boundary so the UI can
+# pull it via /status instead of missing the response.
+_mv_state: dict[str, dict] = {}
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -175,8 +177,9 @@ async def api_cancel_jobs(req: Request):
 
 @app.post("/api/upload")
 async def api_upload(file: UploadFile = File(...)):
+    # Use system temp so we don't pollute the user-facing downloads gallery.
     suffix = Path(file.filename or "upload").suffix
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, dir=str(DOWNLOADS_DIR)) as tmp:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(await file.read())
         tmp_path = tmp.name
     return _j(await _bg(comfy_upload_image, local_path=tmp_path))
@@ -210,7 +213,7 @@ async def api_mv_plan(
     height: int = Form(720),
 ):
     suffix = Path(file.filename or "audio.mp3").suffix
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, dir=str(DOWNLOADS_DIR)) as tmp:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(await file.read())
         audio_path = tmp.name
     return _j(await _bg(comfy_mv_plan, audio_path=audio_path, title=title or project, project_name=project, width=width, height=height))
@@ -236,12 +239,12 @@ async def api_mv_add_element(
     description: str = Form(""),
     files: list[UploadFile] = File(default=[]),
 ):
-    # Save uploaded files to temp paths
+    # Save uploaded files to system temp; comfy_mv_add_element copies them into the project.
     source_paths = []
     for f in files:
         if f.filename:
             suffix = Path(f.filename).suffix
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, dir=str(DOWNLOADS_DIR)) as tmp:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                 tmp.write(await f.read())
                 source_paths.append(tmp.name)
 
@@ -313,15 +316,21 @@ async def api_mv_set_prompts(project: str, req: Request):
 @app.post("/api/mv/{project}/generate")
 async def api_mv_generate_start(project: str, req: Request):
     body = await req.json()
-    if project in _running:
+    state = _mv_state.setdefault(project, {"running": False, "last_result": None})
+    if state["running"]:
         return {"status": "already_running"}
-    _running.add(project)
+    state["running"] = True
 
     async def run():
         try:
-            await _bg(comfy_mv_generate, project_name=project, **body)
+            result = await _bg(comfy_mv_generate, project_name=project, **body)
+            state["last_result"] = _j(result)
+        except Exception as e:
+            state["last_result"] = {"error": str(e), "failed": [], "warnings": [
+                {"type": "generate_exception", "message": str(e)}
+            ]}
         finally:
-            _running.discard(project)
+            state["running"] = False
 
     asyncio.create_task(run())
     return {"status": "started"}
@@ -336,5 +345,98 @@ async def api_mv_stitch(project: str, req: Request):
 @app.get("/api/mv/{project}/status")
 async def api_mv_status_route(project: str):
     result = _j(await _bg(comfy_mv_status, project_name=project))
-    result["generating"] = project in _running
+    state = _mv_state.get(project) or {}
+    result["generating"] = bool(state.get("running"))
+    last = state.get("last_result") or {}
+    if last.get("warnings"):
+        result["last_warnings"] = last["warnings"]
+    if last.get("failed"):
+        result["last_failed"] = last["failed"]
+
+    # Per-scene asset paths so the UI can render thumbnails as they appear.
+    sb_path = PROJECTS_DIR / project / "storyboard.json"
+    if sb_path.exists():
+        try:
+            data = json.loads(sb_path.read_text())
+            result["scene_assets"] = {
+                s["id"]: {
+                    "image_path": s.get("image_path") or "",
+                    "video_path": s.get("video_path") or "",
+                }
+                for s in data.get("scenes") or []
+            }
+        except Exception:
+            pass
     return result
+
+
+@app.get("/api/mv/projects")
+async def api_mv_projects():
+    """List existing music-video projects with basic metadata, newest first."""
+    out = []
+    if PROJECTS_DIR.exists():
+        for p in sorted(PROJECTS_DIR.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+            if not p.is_dir():
+                continue
+            sb = p / "storyboard.json"
+            if not sb.exists():
+                continue
+            try:
+                data = json.loads(sb.read_text())
+            except Exception:
+                continue
+            scenes = data.get("scenes") or []
+            has_clips = sum(1 for s in scenes if s.get("video_path"))
+            final = p / f"{(data.get('title') or p.name).replace(' ', '_')}_Music_Video.mp4"
+            out.append({
+                "name": p.name,
+                "title": data.get("title", p.name),
+                "duration": round(data.get("duration", 0), 1),
+                "scene_count": len(scenes),
+                "clip_count": has_clips,
+                "has_final": final.exists(),
+                "final_path": str(final) if final.exists() else None,
+                "mtime": p.stat().st_mtime,
+            })
+    return {"projects": out}
+
+
+@app.get("/api/mv/{project}/load")
+async def api_mv_load(project: str):
+    """Full storyboard snapshot so the UI can resume a project (brief + scenes + aspect ratio)."""
+    sb_path = PROJECTS_DIR / project / "storyboard.json"
+    if not sb_path.exists():
+        return JSONResponse({"error": "project not found"}, 404)
+    try:
+        data = json.loads(sb_path.read_text())
+    except Exception as e:
+        return JSONResponse({"error": f"corrupted storyboard: {e}"}, 500)
+    final_name = f"{(data.get('title') or project).replace(' ', '_')}_Music_Video.mp4"
+    final = PROJECTS_DIR / project / final_name
+    return {
+        "title": data.get("title"),
+        "duration": data.get("duration"),
+        "width": data.get("width", 1280),
+        "height": data.get("height", 720),
+        "camera_style": data.get("camera_style", ""),
+        "global_style": data.get("global_style", ""),
+        "brief": data.get("brief") or {},
+        "scenes": data.get("scenes") or [],
+        "elements": data.get("elements") or [],
+        "final_video": str(final) if final.exists() else None,
+    }
+
+
+@app.delete("/api/mv/{project}/elements/{element_id}/references")
+async def api_mv_remove_reference(project: str, element_id: str, req: Request):
+    """Remove a single reference image path from an element (used by the ref gallery)."""
+    body = await req.json()
+    path = body.get("path")
+    if not path:
+        return JSONResponse({"error": "missing path"}, 400)
+    return _j(await _bg(
+        comfy_mv_update_element,
+        project_name=project,
+        element_id=element_id,
+        remove_reference=path,
+    ))

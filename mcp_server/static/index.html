@@ -111,6 +111,16 @@
 
   <!-- Result -->
   <div x-show="result" class="fade-in">
+    <template x-if="result?.status === 'error'">
+      <div class="bg-red-900/40 border border-red-700/40 rounded-lg p-3 text-sm space-y-1">
+        <div class="font-medium text-red-200">
+          <span x-text="'Error'"></span>
+          <span x-show="result?.category" class="text-xs ml-2 uppercase" x-text="result?.category"></span>
+        </div>
+        <div class="text-gray-300" x-text="result?.error"></div>
+        <div x-show="result?.hint" class="text-xs text-gray-400 italic" x-text="'&#128161; ' + result?.hint"></div>
+      </div>
+    </template>
     <template x-if="result?.file?.endsWith('.mp4')">
       <video :src="'/files/' + result?.file" controls autoplay loop class="w-full rounded-lg"></video>
     </template>
@@ -155,35 +165,103 @@
 
   <!-- Step 0: Upload Song -->
   <div x-show="mvStep===0" class="space-y-3">
-    <input x-model="mvProject" placeholder="Project name" class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm">
-    <input x-model="mvTitle" placeholder="Song title" class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm">
-    <label class="block w-full border-2 border-dashed border-gray-700 rounded-lg p-8 text-center cursor-pointer hover:border-gray-500">
-      <input type="file" accept="audio/*" @change="mvAudioFile = $event.target.files[0]" class="hidden">
-      <span x-text="mvAudioFile ? mvAudioFile.name : 'Drop song here'" class="text-gray-400"></span>
-    </label>
-    <div>
-      <h2 class="text-sm font-medium text-gray-400 mb-2">Aspect Ratio</h2>
-      <div class="flex gap-1.5 flex-wrap">
-        <template x-for="ar in aspectRatios" :key="ar.label">
-          <button @click="mvAspectRatio=ar"
-                  :class="mvAspectRatio.label===ar.label ? 'ring-2 ring-blue-500 bg-gray-800' : 'bg-gray-900'"
-                  class="px-3 py-1.5 rounded-lg text-xs border border-gray-800 hover:border-gray-600">
-            <span x-text="ar.label"></span>
+
+    <!-- Resume existing project -->
+    <div x-show="mvProjects.length > 0" class="bg-gray-900 rounded-lg p-3 border border-gray-800">
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="text-sm font-medium text-gray-400">Resume a project</h2>
+        <button @click="mvLoadProjects()" class="text-xs text-gray-500 hover:text-gray-300">&#8635;</button>
+      </div>
+      <div class="space-y-1 max-h-48 overflow-y-auto">
+        <template x-for="p in mvProjects" :key="p.name">
+          <button @click="mvLoadProject(p.name)" class="w-full text-left p-2 rounded hover:bg-gray-800 flex items-center gap-2">
+            <span class="text-sm flex-1" x-text="p.title"></span>
+            <span class="text-xs text-gray-500" x-text="p.scene_count + ' scenes'"></span>
+            <span class="text-xs" :class="p.has_final ? 'text-green-400' : 'text-gray-600'" x-text="p.has_final ? '&#9679; final' : (p.clip_count + '/' + p.scene_count + ' clips')"></span>
           </button>
         </template>
       </div>
     </div>
-    <button @click="mvPlan()" :disabled="!mvProject || !mvAudioFile || mvLoading"
-            class="w-full bg-blue-600 hover:bg-blue-500 py-2 rounded-lg font-medium text-sm disabled:opacity-50">
-      <span x-text="mvLoading ? 'Transcribing...' : 'Plan Video'"></span>
-    </button>
+
+    <!-- Or start a new one -->
+    <div class="space-y-3 pt-2">
+      <div class="text-xs text-gray-500 uppercase tracking-wide" x-show="mvProjects.length > 0">Or start new</div>
+      <input x-model="mvProject" placeholder="Project name" class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm">
+      <input x-model="mvTitle" placeholder="Song title" class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm">
+      <label class="block w-full border-2 border-dashed border-gray-700 rounded-lg p-8 text-center cursor-pointer hover:border-gray-500">
+        <input type="file" accept="audio/*" @change="mvAudioFile = $event.target.files[0]" class="hidden">
+        <span x-text="mvAudioFile ? mvAudioFile.name : 'Drop song here'" class="text-gray-400"></span>
+      </label>
+      <div>
+        <h2 class="text-sm font-medium text-gray-400 mb-2">Aspect Ratio</h2>
+        <div class="flex gap-1.5 flex-wrap">
+          <template x-for="ar in aspectRatios" :key="ar.label">
+            <button @click="mvAspectRatio=ar"
+                    :class="mvAspectRatio.label===ar.label ? 'ring-2 ring-blue-500 bg-gray-800' : 'bg-gray-900'"
+                    class="px-3 py-1.5 rounded-lg text-xs border border-gray-800 hover:border-gray-600">
+              <span x-text="ar.label"></span>
+            </button>
+          </template>
+        </div>
+      </div>
+      <button @click="mvPlan()" :disabled="!mvProject || !mvAudioFile || mvLoading"
+              class="w-full bg-blue-600 hover:bg-blue-500 py-2 rounded-lg font-medium text-sm disabled:opacity-50">
+        <span x-text="mvLoading ? 'Transcribing...' : 'Plan Video'"></span>
+      </button>
+    </div>
+
+    <!-- Plan result banner -->
+    <div x-show="mvPlanResult" class="bg-gray-900 rounded-lg p-3 border border-gray-800 text-xs space-y-2">
+      <div class="flex items-center justify-between">
+        <span class="text-gray-400">
+          <span x-text="'Planned ' + mvPlanResult?.scene_count + ' scenes'"></span>
+          <span class="text-gray-600" x-text="' · ' + (mvPlanResult?.duration || 0).toFixed(1) + 's'"></span>
+          <template x-if="mvPlanResult?.beat_info?.tempo_bpm">
+            <span class="text-gray-600" x-text="' · ' + mvPlanResult.beat_info.tempo_bpm + ' BPM · beat-split into ' + mvPlanResult.beat_info.scene_count_after + ' scenes'"></span>
+          </template>
+        </span>
+        <button @click="mvDismissPlanResult()" class="text-gray-600 hover:text-gray-300">&times;</button>
+      </div>
+      <template x-for="w in mvPlanResult?.warnings || []" :key="w.type">
+        <div class="rounded p-2 flex gap-2"
+             :class="w.type === 'sparse_vocals' ? 'bg-yellow-900/40 border border-yellow-700/40' : 'bg-red-900/40 border border-red-700/40'">
+          <span>&#9888;</span>
+          <div class="flex-1">
+            <div class="font-medium" x-text="w.type.replaceAll('_', ' ')"></div>
+            <div class="text-gray-300" x-text="w.message"></div>
+          </div>
+        </div>
+      </template>
+    </div>
   </div>
 
   <!-- Step 1: World Building -->
   <div x-show="mvStep===1" class="space-y-3">
+
+    <!-- Creative Brief editor (collapsible) -->
+    <div class="bg-gray-900 rounded-lg border border-gray-800">
+      <button @click="mvBriefOpen = !mvBriefOpen" class="w-full flex items-center justify-between p-3 text-left">
+        <div>
+          <span class="text-sm font-medium">Creative brief</span>
+          <span class="text-xs text-gray-500 ml-2">narrative · mood · style · palette · camera</span>
+        </div>
+        <span x-text="mvBriefOpen ? '&#9650;' : '&#9660;'" class="text-gray-500"></span>
+      </button>
+      <div x-show="mvBriefOpen" class="p-3 pt-0 space-y-2 border-t border-gray-800">
+        <textarea x-model="mvBrief.narrative" placeholder="Narrative — the story arc" rows="2" class="w-full bg-gray-950 border border-gray-800 rounded p-2 text-xs resize-none"></textarea>
+        <textarea x-model="mvBrief.mood" placeholder="Mood — emotional tone" rows="1" class="w-full bg-gray-950 border border-gray-800 rounded p-2 text-xs resize-none"></textarea>
+        <textarea x-model="mvBrief.visual_style" placeholder="Visual style — look, film stock, references" rows="2" class="w-full bg-gray-950 border border-gray-800 rounded p-2 text-xs resize-none"></textarea>
+        <textarea x-model="mvBrief.color_palette" placeholder="Color palette" rows="1" class="w-full bg-gray-950 border border-gray-800 rounded p-2 text-xs resize-none"></textarea>
+        <textarea x-model="mvBrief.camera_style" placeholder="Camera style" rows="1" class="w-full bg-gray-950 border border-gray-800 rounded p-2 text-xs resize-none"></textarea>
+        <textarea x-model="mvBrief.global_style" placeholder="Global style (applied to all generations)" rows="1" class="w-full bg-gray-950 border border-gray-800 rounded p-2 text-xs resize-none"></textarea>
+        <textarea x-model="mvBrief.notes" placeholder="Notes" rows="1" class="w-full bg-gray-950 border border-gray-800 rounded p-2 text-xs resize-none"></textarea>
+        <button @click="mvSaveBrief()" class="w-full bg-blue-600 hover:bg-blue-500 py-1.5 rounded text-xs">Save brief</button>
+      </div>
+    </div>
+
     <div class="bg-gray-800/50 rounded-lg p-3 border border-gray-700 text-xs text-gray-400 space-y-1">
       <p class="font-medium text-gray-300">Build your visual world</p>
-      <p>These elements were auto-detected from the lyrics. Edit descriptions to match your vision, upload reference photos, or generate visual references. Everything here gets used when creating scene images.</p>
+      <p>These elements were auto-detected from the lyrics. Edit descriptions to match your vision, upload reference photos, or generate visual references. Scenes that have refs for their elements will be composed via Qwen-Image-Edit (multi-ref); scenes without refs fall back to z-turbo text-to-image.</p>
     </div>
 
     <div class="flex gap-2 mb-2">
@@ -218,10 +296,10 @@
               <!-- Editable description -->
               <textarea x-model="el.description" @change="mvUpdateElement(el.id, el.description)" rows="2"
                         class="w-full bg-gray-950 border border-gray-800 rounded p-1.5 text-xs text-gray-400 resize-none mt-1 focus:border-gray-600 focus:text-gray-200"></textarea>
-              <!-- Reference image thumbnails -->
+              <!-- Reference image thumbnails — click opens ref gallery for approve/delete -->
               <div x-show="el.reference_paths?.length" class="flex gap-1 mt-2 overflow-x-auto">
-                <template x-for="ref in el.reference_paths || []" :key="ref">
-                  <img :src="'/files/' + ref" class="h-16 w-16 rounded object-cover flex-shrink-0 cursor-pointer" @click="viewFile({path: ref})">
+                <template x-for="(ref, ri) in el.reference_paths || []" :key="ref">
+                  <img :src="'/files/' + ref" class="h-16 w-16 rounded object-cover flex-shrink-0 cursor-pointer ring-1 ring-gray-800 hover:ring-blue-500" @click="mvOpenRefGallery(el, ri)">
                 </template>
               </div>
             </div>
@@ -251,15 +329,49 @@
   <!-- Step 2: Scene Prompts -->
   <div x-show="mvStep===2" class="space-y-3">
     <h2 class="font-medium">Scenes <span class="text-gray-500 text-sm" x-text="mvScenes?.length + ' clips'"></span></h2>
+
+    <!-- Saved-prompts warning banner (from set_prompts) -->
+    <template x-for="w in mvPromptsWarnings || []" :key="w.type">
+      <div class="bg-yellow-900/40 border border-yellow-700/40 rounded p-2 text-xs flex gap-2">
+        <span>&#9888;</span>
+        <div class="flex-1">
+          <div class="font-medium" x-text="w.type.replaceAll('_', ' ')"></div>
+          <div class="text-gray-300" x-text="w.message"></div>
+          <template x-if="w.conflicts">
+            <div class="mt-1 text-gray-400">
+              <template x-for="c in w.conflicts" :key="c.scene_id">
+                <div x-text="'Scene ' + c.scene_id + ': ' + (c.forbidden_phrases_present || []).join(', ')"></div>
+              </template>
+            </div>
+          </template>
+        </div>
+      </div>
+    </template>
+
     <div class="space-y-2">
       <template x-for="scene in mvScenes || []" :key="scene.id">
         <div class="bg-gray-900 rounded-lg p-3 border border-gray-800">
-          <div class="flex items-center gap-2 mb-1">
+          <div class="flex items-center gap-2 mb-1 flex-wrap">
             <span class="text-xs bg-gray-800 px-2 py-0.5 rounded" x-text="scene.start.toFixed(1) + 's - ' + scene.end.toFixed(1) + 's'"></span>
             <span class="text-xs text-gray-500" x-text="scene.segment_type"></span>
             <span class="text-xs text-gray-600" x-text="(scene.end - scene.start).toFixed(1) + 's'"></span>
+            <!-- Multi-ref badge: how many of this scene's element_refs have a reference image -->
+            <template x-if="mvRefCountForScene(scene) > 0">
+              <span class="text-xs bg-blue-900/60 border border-blue-700 text-blue-200 px-2 py-0.5 rounded-full" x-text="'&#10024; ' + mvRefCountForScene(scene) + '-ref qwen-edit'"></span>
+            </template>
+            <template x-if="(scene.element_refs||[]).length > 0 && mvRefCountForScene(scene) === 0">
+              <span class="text-xs bg-yellow-900/60 border border-yellow-700 text-yellow-200 px-2 py-0.5 rounded-full" title="Elements referenced but none have generated references — identity will drift">&#9888; refs missing</span>
+            </template>
+            <template x-if="(scene.element_refs||[]).length === 0">
+              <span class="text-xs bg-gray-800 border border-gray-700 text-gray-500 px-2 py-0.5 rounded-full">z-turbo txt2img</span>
+            </template>
           </div>
           <p class="text-xs text-gray-400 mb-2 line-clamp-2" x-text="scene.text"></p>
+
+          <!-- Scene thumbnail (shown once images exist) -->
+          <div x-show="scene.image_path" class="mb-2">
+            <img :src="'/files/' + scene.image_path" class="h-24 rounded object-cover cursor-pointer" @click="viewFile({path: scene.image_path})">
+          </div>
 
           <!-- Element tags -->
           <div class="flex flex-wrap gap-1 mb-2">
@@ -338,6 +450,42 @@
       </p>
     </div>
 
+    <!-- Warnings from the last generate run -->
+    <template x-for="w in mvGenStatus?.last_warnings || []" :key="w.type + (w.message || '')">
+      <div class="rounded p-2 text-xs flex gap-2"
+           :class="w.type === 'element_drift' ? 'bg-yellow-900/40 border border-yellow-700/40' : 'bg-red-900/40 border border-red-700/40'">
+        <span>&#9888;</span>
+        <div class="flex-1">
+          <div class="font-medium" x-text="w.type.replaceAll('_', ' ')"></div>
+          <div class="text-gray-300" x-text="w.message"></div>
+          <template x-if="w.elements">
+            <div class="mt-1 text-gray-400">
+              <template x-for="e in w.elements" :key="e.id">
+                <div x-text="'• ' + (e.name || e.id) + ' (in ' + e.scene_count + ' scenes)'"></div>
+              </template>
+            </div>
+          </template>
+        </div>
+      </div>
+    </template>
+
+    <!-- Failed scenes from last run, with retry -->
+    <div x-show="(mvGenStatus?.last_failed || []).length > 0" class="bg-red-900/20 border border-red-800/60 rounded-lg p-3 space-y-2">
+      <div class="text-xs font-medium text-red-300">Failed scenes from last run</div>
+      <div class="space-y-1">
+        <template x-for="f in mvGenStatus?.last_failed || []" :key="f.scene + '_' + f.step">
+          <div class="flex items-center gap-2 text-xs">
+            <span class="bg-red-900/60 px-2 py-0.5 rounded" x-text="'Scene ' + f.scene"></span>
+            <span class="text-gray-400" x-text="f.step + (f.reason ? ' · ' + f.reason : '')"></span>
+            <button @click="mvRetryScene(f.scene)" :disabled="mvRetrying[f.scene] || mvGenStatus?.generating"
+                    class="ml-auto bg-gray-800 hover:bg-gray-700 px-2 py-0.5 rounded disabled:opacity-50">
+              <span x-text="mvRetrying[f.scene] ? 'Retrying...' : 'Retry'"></span>
+            </button>
+          </div>
+        </template>
+      </div>
+    </div>
+
     <div class="flex gap-2">
       <button @click="mvSavePrompts(); mvStartGenerate()" :disabled="mvGenStatus?.generating"
               class="flex-1 bg-blue-600 hover:bg-blue-500 py-2 rounded-lg text-sm disabled:opacity-50">
@@ -364,6 +512,39 @@
   </div>
 
 </div>
+</template>
+
+<!-- Reference Gallery Modal (Pack B) -->
+<template x-if="mvRefGallery" x-cloak>
+  <div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" @click.self="mvRefGallery=null">
+    <div class="bg-gray-900 rounded-lg border border-gray-700 max-w-3xl w-full p-4 space-y-3">
+      <div class="flex items-center justify-between">
+        <div class="text-sm">
+          <span class="font-medium" x-text="mvRefGallery.name"></span>
+          <span class="text-gray-500 ml-2" x-text="'(' + (mvRefGallery.index + 1) + '/' + mvRefGallery.paths.length + ')'"></span>
+        </div>
+        <button @click="mvRefGallery=null" class="text-gray-500 hover:text-gray-300 text-2xl leading-none">&times;</button>
+      </div>
+      <div class="relative">
+        <img :src="'/files/' + mvRefGallery.paths[mvRefGallery.index]" class="w-full max-h-[70vh] object-contain rounded">
+        <button x-show="mvRefGallery.index > 0" @click="mvRefGallery.index--" class="absolute left-2 top-1/2 -translate-y-1/2 bg-gray-900/80 hover:bg-gray-800 w-10 h-10 rounded-full">&#10094;</button>
+        <button x-show="mvRefGallery.index < mvRefGallery.paths.length - 1" @click="mvRefGallery.index++" class="absolute right-2 top-1/2 -translate-y-1/2 bg-gray-900/80 hover:bg-gray-800 w-10 h-10 rounded-full">&#10095;</button>
+      </div>
+      <div class="flex items-center justify-between">
+        <div class="flex gap-1 overflow-x-auto">
+          <template x-for="(p, i) in mvRefGallery.paths" :key="p">
+            <img :src="'/files/' + p" @click="mvRefGallery.index = i"
+                 :class="i === mvRefGallery.index ? 'ring-2 ring-blue-500' : 'ring-1 ring-gray-800 opacity-60'"
+                 class="h-14 w-14 rounded object-cover flex-shrink-0 cursor-pointer">
+          </template>
+        </div>
+        <div class="flex gap-2">
+          <a :href="'/files/' + mvRefGallery.paths[mvRefGallery.index]" download class="text-xs bg-gray-800 hover:bg-gray-700 px-3 py-1.5 rounded">Download</a>
+          <button @click="mvRemoveReference()" class="text-xs bg-red-900/60 hover:bg-red-900 text-red-200 px-3 py-1.5 rounded">Delete</button>
+        </div>
+      </div>
+    </div>
+  </div>
 </template>
 
 </main>
@@ -410,6 +591,17 @@ function app() {
     mvFinalVideo: null,
     mvLoading: false,
     mvPollTimer: null,
+    // Pack A/B/D additions: warnings, beat info, brief, project browser, ref gallery
+    mvPlanResult: null,        // plan response (warnings[], beat_info, duration)
+    mvPromptsWarnings: [],     // last set_prompts warnings
+    mvProjects: [],            // [{name, title, duration, scene_count, clip_count, has_final}]
+    mvBrief: {
+      narrative: '', mood: '', visual_style: '',
+      color_palette: '', camera_style: '', global_style: '', notes: ''
+    },
+    mvBriefOpen: false,
+    mvRefGallery: null,        // { elementId, paths: [], index }
+    mvRetrying: {},            // {sceneId: true} while a retry is in flight
 
     async init() {
       try {
@@ -421,6 +613,7 @@ function app() {
         this.ready = true;
         await this.loadPresets();
         await this.loadGallery();
+        await this.mvLoadProjects();
       } catch (e) {
         this.setupError = 'no_key';
       }
@@ -491,6 +684,7 @@ function app() {
     // ── Music Video ──
     async mvPlan() {
       this.mvLoading = true;
+      this.mvPlanResult = null;
       const fd = new FormData();
       fd.append('file', this.mvAudioFile);
       fd.append('title', this.mvTitle || this.mvProject);
@@ -498,9 +692,16 @@ function app() {
       fd.append('height', this.mvAspectRatio.h);
       const res = await fetch(`/api/mv/${this.mvProject}/plan`, { method: 'POST', body: fd }).then(r => r.json());
       this.mvScenes = res.scenes || [];
+      this.mvPlanResult = {
+        duration: res.duration,
+        scene_count: res.scene_count,
+        warnings: res.warnings || [],
+        beat_info: res.beat_info || null,
+      };
       this.mvLoading = false;
       this.mvStep = 1;
-      this.mvLoadElements();
+      await this.mvLoadElements();
+      await this.mvLoadProjects();
     },
 
     async mvLoadElements() {
@@ -563,7 +764,7 @@ function app() {
     },
 
     async mvSavePrompts() {
-      await fetch(`/api/mv/${this.mvProject}/prompts`, {
+      const res = await fetch(`/api/mv/${this.mvProject}/prompts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ scene_prompts: this.mvScenes.map(s => ({
@@ -572,7 +773,8 @@ function app() {
           motion_prompt: s.motion_prompt,
           element_refs: s.element_refs || [],
         })) })
-      });
+      }).then(r => r.json());
+      this.mvPromptsWarnings = res.warnings || [];
     },
 
     async mvStartGenerate() {
@@ -586,12 +788,19 @@ function app() {
 
     mvPollStatus() {
       if (this.mvPollTimer) clearInterval(this.mvPollTimer);
-      this.mvPollTimer = setInterval(async () => {
+      const tick = async () => {
         this.mvGenStatus = await fetch(`/api/mv/${this.mvProject}/status`).then(r => r.json());
+        // Merge per-scene image_path into mvScenes without clobbering user's in-progress edits.
+        const assets = this.mvGenStatus.scene_assets || {};
+        for (const s of this.mvScenes) {
+          const a = assets[s.id];
+          if (a && a.image_path && !s.image_path) s.image_path = a.image_path;
+          if (a && a.video_path && !s.video_path) s.video_path = a.video_path;
+        }
         if (!this.mvGenStatus.generating) clearInterval(this.mvPollTimer);
-      }, 5000);
-      // Immediate first poll
-      fetch(`/api/mv/${this.mvProject}/status`).then(r => r.json()).then(d => this.mvGenStatus = d);
+      };
+      this.mvPollTimer = setInterval(tick, 5000);
+      tick(); // immediate first poll
     },
 
     async mvDoStitch() {
@@ -603,7 +812,117 @@ function app() {
       }).then(r => r.json());
       if (res.output) this.mvFinalVideo = '/files/' + res.output;
       this.mvLoading = false;
-    }
+    },
+
+    // ── Pack A/B/D helpers ──
+
+    async mvLoadProjects() {
+      try {
+        const res = await fetch('/api/mv/projects').then(r => r.json());
+        this.mvProjects = res.projects || [];
+      } catch (e) { /* non-fatal */ }
+    },
+
+    async mvLoadProject(name) {
+      if (!name) return;
+      this.mvLoading = true;
+      try {
+        const r = await fetch(`/api/mv/${name}/load`).then(r => r.json());
+        if (r.error) { this.mvLoading = false; return; }
+        this.mvProject = name;
+        this.mvTitle = r.title || name;
+        this.mvScenes = r.scenes || [];
+        this.mvElements = (r.elements || []).map(el => ({
+          ...el,
+          source_images: (el.source_images || []).length,
+          reference_images: (el.reference_images || []).length,
+          reference_paths: el.reference_images || [],
+        }));
+        this.mvBrief = {
+          narrative: r.brief?.narrative || '',
+          mood: r.brief?.mood || '',
+          visual_style: r.brief?.visual_style || '',
+          color_palette: r.brief?.color_palette || '',
+          camera_style: r.camera_style || '',
+          global_style: r.global_style || '',
+          notes: r.brief?.notes || '',
+        };
+        // Match aspect ratio to stored width/height
+        const match = this.aspectRatios.find(a => a.w === r.width && a.h === r.height);
+        if (match) this.mvAspectRatio = match;
+        if (r.final_video) this.mvFinalVideo = '/files/' + r.final_video;
+        this.mvStep = this.mvScenes.length ? 1 : 0;
+        this.mvPollStatus();
+      } catch (e) { /* non-fatal */ }
+      this.mvLoading = false;
+    },
+
+    async mvSaveBrief() {
+      await fetch(`/api/mv/${this.mvProject}/brief`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          narrative: this.mvBrief.narrative,
+          mood: this.mvBrief.mood,
+          visual_style: this.mvBrief.visual_style,
+          color_palette: this.mvBrief.color_palette,
+          camera_style: this.mvBrief.camera_style,
+          global_style: this.mvBrief.global_style,
+          notes: this.mvBrief.notes,
+        })
+      });
+    },
+
+    mvRefCountForScene(scene) {
+      // How many of this scene's element_refs have a reference_image on disk
+      // (drives the 'uses multi-ref' badge vs. 'will drift via z-turbo' warning).
+      const refs = scene.element_refs || [];
+      let count = 0;
+      for (const r of refs) {
+        const eid = r.element_id || r;
+        const el = this.mvElements.find(e => e.id === eid);
+        if (el && (el.reference_images > 0 || (el.reference_paths || []).length > 0)) count++;
+      }
+      return count;
+    },
+
+    mvOpenRefGallery(el, startIndex = 0) {
+      this.mvRefGallery = {
+        elementId: el.id,
+        name: el.name,
+        paths: (el.reference_paths || []).slice(),
+        index: startIndex,
+      };
+    },
+
+    async mvRemoveReference() {
+      if (!this.mvRefGallery) return;
+      const g = this.mvRefGallery;
+      const path = g.paths[g.index];
+      if (!path) return;
+      await fetch(`/api/mv/${this.mvProject}/elements/${g.elementId}/references`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      });
+      g.paths.splice(g.index, 1);
+      if (g.index >= g.paths.length) g.index = Math.max(0, g.paths.length - 1);
+      if (g.paths.length === 0) this.mvRefGallery = null;
+      this.mvLoadElements();
+    },
+
+    async mvRetryScene(sceneId) {
+      this.mvRetrying[sceneId] = true;
+      await fetch(`/api/mv/${this.mvProject}/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scenes: [sceneId] })
+      });
+      this.mvPollStatus();
+      setTimeout(() => { this.mvRetrying[sceneId] = false; }, 2000);
+    },
+
+    mvDismissPlanResult() { this.mvPlanResult = null; },
   };
 }
 </script>

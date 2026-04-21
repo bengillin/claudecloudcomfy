@@ -122,15 +122,32 @@ def _list_preset_names() -> list[str]:
     )
 
 
-def _parse_saved_files(output: str) -> str:
-    """Parse comfy.sh output for 'Saved ...' lines and return structured JSON."""
-    lines = output.splitlines()
-    saved = [l.strip() for l in lines if l.strip().startswith("Saved ")]
-    files = []
-    for s in saved:
+def _saved_files(output: str, require_exists: bool = False) -> list[str]:
+    """Extract absolute paths from 'Saved X' lines in comfy.sh output.
+
+    If require_exists is True, filter out paths that don't exist on disk.
+    Single source of truth for output parsing — used by both the JSON wrapper
+    and the 'first existing file' helper.
+    """
+    if not output:
+        return []
+    files: list[str] = []
+    for line in output.splitlines():
+        s = line.strip()
+        if not s.startswith("Saved "):
+            continue
         path = s.replace("Saved ", "").strip()
-        files.append(str(COMFY_SH.parent / path))
-    result = {"status": "success", "output": output}
+        full = COMFY_SH.parent / path
+        if require_exists and not full.exists():
+            continue
+        files.append(str(full))
+    return files
+
+
+def _parse_saved_files(output: str) -> str:
+    """JSON-structured result for MCP tool returns ('status', 'output', 'files', 'file')."""
+    files = _saved_files(output)
+    result: dict = {"status": "success", "output": output}
     if files:
         result["files"] = files
         result["file"] = files[-1]
@@ -1682,16 +1699,9 @@ def comfy_mv_status(project_name: str) -> str:
 
 
 def _find_saved_file(output: str) -> str | None:
-    """Extract saved file path from comfy.sh output."""
-    if not output:
-        return None
-    for line in output.splitlines():
-        if line.strip().startswith("Saved "):
-            path = line.strip().replace("Saved ", "").strip()
-            full = COMFY_SH.parent / path
-            if full.exists():
-                return str(full)
-    return None
+    """First 'Saved X' path that exists on disk, or None."""
+    files = _saved_files(output, require_exists=True)
+    return files[0] if files else None
 
 
 def _upload_file(local_path: str) -> str | None:
