@@ -1,0 +1,13 @@
+{
+  "workflow": "qwen-edit-2ref_workflow.json",
+  "description": "Qwen-Image-Edit 2509 with 2 reference images — compose a scene preserving identities from both",
+  "prompt_node": "435",
+  "prompt_field": "value",
+  "seed_node": "433:3",
+  "image_nodes": ["78", "79"],
+  "capabilities": ["edit", "multi_ref"],
+  "output_format": "png",
+  "typical_time_seconds": 25,
+  "prompt_guide": "Write a composition instruction that tells the model how to combine the two reference images into one scene. Example: 'Place the character from image 1 inside the environment from image 2, preserving each subject's identity and style.' Reference images by role (character, location, prop) rather than 'image 1 / image 2' when possible. Keep instructions concise. CRITICAL: never ask for readable text, typography, logos, or lettering — treat icons as silhouettes, not lettered labels.",
+  "defaults": []
+}

@@ -3,6 +3,7 @@
 import functools
 import json
 import os
+import re
 import subprocess
 import datetime
 from pathlib import Path
@@ -1162,7 +1163,7 @@ def comfy_mv_plan(
     """
     from .music_video import plan, Storyboard
 
-    sb = plan(audio_path, title, min_duration, max_duration)
+    sb, plan_info = plan(audio_path, title, min_duration, max_duration)
     sb.width = width
     sb.height = height
 
@@ -1195,7 +1196,7 @@ def comfy_mv_plan(
         f"[{s.start:.1f}s - {s.end:.1f}s] {s.text}" for s in sb.scenes if s.text
     )
 
-    return json.dumps({
+    response = {
         "status": "planned",
         "project": str(project_dir),
         "storyboard": str(sb_path),
@@ -1204,7 +1205,12 @@ def comfy_mv_plan(
         "scenes": scenes_summary,
         "full_lyrics": full_lyrics,
         "next_step": "Call comfy_mv_set_brief with your creative analysis — narrative, mood, visual style, suggested elements (who/what/when/where/why), and suggested scenes. Then the user can upload reference images or approve auto-generation.",
-    }, indent=2)
+    }
+    if plan_info.get("beat_info"):
+        response["beat_info"] = plan_info["beat_info"]
+    if plan_info.get("warnings"):
+        response["warnings"] = plan_info["warnings"]
+    return json.dumps(response, indent=2)
 
 
 @mcp.tool()
@@ -1249,7 +1255,93 @@ def comfy_mv_set_prompts(
             updated += 1
 
     sb_path.write_text(json.dumps(data, indent=2))
-    return json.dumps({"status": "updated", "scenes_updated": updated})
+
+    # Soft-validate prompts against global_style and brief.visual_style —
+    # surface contradictions rather than block them. Covers the common mistake
+    # where a prompt ignores a constraint like "no chrome 3D render".
+    constraint_text = " ".join([
+        data.get("global_style") or "",
+        (data.get("brief") or {}).get("visual_style") or "",
+    ]).lower()
+    conflicts = _style_conflicts(constraint_text, [
+        (s["id"], (s.get("prompt") or "") + " " + (s.get("motion_prompt") or ""))
+        for s in data["scenes"]
+    ])
+
+    out = {"status": "updated", "scenes_updated": updated}
+    if conflicts:
+        out["warnings"] = [{
+            "type": "prompt_vs_style_conflict",
+            "message": "Some scene prompts appear to contradict the project's global_style / visual_style (e.g. global says 'no X', scene prompt says 'X'). Review before generating.",
+            "conflicts": conflicts,
+        }]
+    return json.dumps(out, indent=2)
+
+
+_NEG_PATTERN = re.compile(
+    r"\b(?:no|without|avoid|never|not)\s+([a-z][a-z0-9 \-]{1,40}?)(?=[\.,;:!?\)]|\band\b|\bor\b|\bbut\b|$)",
+    re.IGNORECASE,
+)
+
+
+def _style_conflicts(constraint_text: str, scenes: list[tuple]) -> list[dict]:
+    """Find scenes whose prompt text contains phrases forbidden by the constraint text.
+
+    Parses negative constraints like 'no chrome 3D', 'without text',
+    'avoid typography' and flags scenes that mention those phrases.
+    Deliberately conservative — keyword substring match, not NLP.
+    """
+    forbidden: list[str] = []
+    for m in _NEG_PATTERN.finditer(constraint_text):
+        phrase = m.group(1).strip().strip(",.")
+        # Drop trivial stopwords-only matches
+        if len(phrase) >= 3 and phrase not in {"one", "two", "the", "any", "all", "only"}:
+            forbidden.append(phrase)
+
+    if not forbidden:
+        return []
+
+    conflicts: list[dict] = []
+    for sid, prompt_text in scenes:
+        lower = prompt_text.lower()
+        hit = [p for p in forbidden if p in lower]
+        if hit:
+            conflicts.append({"scene_id": sid, "forbidden_phrases_present": hit})
+    return conflicts
+
+
+_CATEGORY_PRIORITY = {"who": 0, "where": 1, "what": 2, "when": 3, "why": 4}
+
+
+def _collect_scene_refs(
+    scene: dict,
+    elements_by_id: dict,
+    max_refs: int = 3,
+) -> list[str]:
+    """Return up to max_refs reference image paths for a scene's element_refs.
+
+    Priority order: who > where > what > when > why. Uses the first existing
+    reference_image per element (falling back to source_images). Non-existent
+    paths are skipped. Deduplicates identical paths across elements.
+    """
+    ranked: list[tuple[int, str]] = []
+    seen: set[str] = set()
+    for ref in scene.get("element_refs", []) or []:
+        eid = ref["element_id"] if isinstance(ref, dict) else ref
+        el = elements_by_id.get(eid)
+        if not el:
+            continue
+        candidates = list(el.get("reference_images") or []) + list(el.get("source_images") or [])
+        for p in candidates:
+            if not p or p in seen:
+                continue
+            if not Path(p).exists():
+                continue
+            seen.add(p)
+            ranked.append((_CATEGORY_PRIORITY.get(el.get("category", ""), 99), p))
+            break
+    ranked.sort(key=lambda x: x[0])
+    return [p for _, p in ranked[:max_refs]]
 
 
 @mcp.tool()
@@ -1263,6 +1355,12 @@ def comfy_mv_generate(
 
     Runs the full pipeline or specific steps. Skips already-completed work
     (resume-safe). Use 'scenes' to regenerate specific scenes only.
+
+    Scene image generation is ref-aware: if a scene's element_refs include
+    elements with reference_images (generated via comfy_mv_generate_element),
+    the scene is composed through Qwen-Image-Edit 2509 with up to 3 refs
+    simultaneously — preserving character / location / prop identity across
+    clips. Scenes with no refs fall back to z-turbo txt2img.
 
     Args:
         project_name: Project directory name.
@@ -1281,6 +1379,10 @@ def comfy_mv_generate(
     vid_w = data.get("width", 1280)
     vid_h = data.get("height", 720)
 
+    # Ensure output subdirs exist (resilient to user cleanup between runs)
+    for subdir in ("scenes", "segments", "clips"):
+        (project_dir / subdir).mkdir(parents=True, exist_ok=True)
+
     # Filter to requested scenes
     if scenes is not None:
         target_scenes = [s for s in all_scenes if s["id"] in scenes]
@@ -1294,11 +1396,37 @@ def comfy_mv_generate(
     else:
         target_scenes = all_scenes
 
+    # Element readiness check — elements referenced by multiple scenes without
+    # a reference image will drift (different face / body per scene).
+    warnings = []
+    elements_by_id = {e["id"]: e for e in data.get("elements", [])}
+    scene_refs_count: dict[str, int] = {}
+    for s in target_scenes:
+        for ref in s.get("element_refs", []) or []:
+            eid = ref["element_id"] if isinstance(ref, dict) else ref
+            scene_refs_count[eid] = scene_refs_count.get(eid, 0) + 1
+    drifting = []
+    for eid, count in scene_refs_count.items():
+        if count < 2:
+            continue
+        el = elements_by_id.get(eid)
+        if el is None:
+            continue
+        if not el.get("reference_images") and not el.get("source_images"):
+            drifting.append({"id": eid, "name": el.get("name", eid), "scene_count": count})
+    if drifting:
+        warnings.append({
+            "type": "element_drift",
+            "message": "Elements appear in multiple scenes without reference images — identity/appearance will drift across clips. Run comfy_mv_generate_element first for each.",
+            "elements": drifting,
+        })
+
     results = {"images": 0, "audio": 0, "clips": 0, "failed": []}
     WIDTH, HEIGHT = 1280, 720
 
     # Step: Generate images
     if step in (None, "images"):
+        elements_by_id_for_gen = {e["id"]: e for e in data.get("elements", [])}
         for scene in target_scenes:
             if not scene.get("prompt"):
                 continue
@@ -1306,13 +1434,53 @@ def comfy_mv_generate(
             if img_path.exists():
                 scene["image_path"] = str(img_path)
                 continue
-            output = _run_comfy(
-                "gen", "--preset=z-turbo",
-                "--prompt", scene["prompt"],
-                f"--seed={scene.get('seed', 42 + scene['id'])}",
-                "--set", f"57:13.width={vid_w}",
-                "--set", f"57:13.height={vid_h}",
-            )
+
+            ref_paths = _collect_scene_refs(scene, elements_by_id_for_gen, max_refs=3)
+            seed = scene.get("seed", 42 + scene["id"])
+
+            if not ref_paths:
+                # No element refs — straight txt2img via z-turbo
+                output = _run_comfy(
+                    "gen", "--preset=z-turbo",
+                    "--prompt", scene["prompt"],
+                    f"--seed={seed}",
+                    "--set", f"57:13.width={vid_w}",
+                    "--set", f"57:13.height={vid_h}",
+                )
+            else:
+                # Compose scene from up to 3 element reference images via Qwen-Image-Edit 2509
+                uploaded = []
+                upload_ok = True
+                for p in ref_paths:
+                    remote = _upload_file(p)
+                    if not remote:
+                        upload_ok = False
+                        break
+                    uploaded.append(remote)
+                if not upload_ok:
+                    results["failed"].append({"scene": scene["id"], "step": "image", "reason": "ref upload failed"})
+                    continue
+
+                n = len(uploaded)
+                if n == 1:
+                    wf = "presets/qwen-edit_workflow.json"
+                    image_sets = [("78", uploaded[0])]
+                elif n == 2:
+                    wf = "presets/qwen-edit-2ref_workflow.json"
+                    image_sets = [("78", uploaded[0]), ("79", uploaded[1])]
+                else:
+                    wf = "presets/qwen-edit-3ref_workflow.json"
+                    image_sets = [("78", uploaded[0]), ("79", uploaded[1]), ("80", uploaded[2])]
+
+                cmd = [
+                    "go", wf,
+                    "--set", f"435.value={scene['prompt']}",
+                    "--set", f"433:3.seed={seed}",
+                ]
+                for node_id, remote_name in image_sets:
+                    cmd.extend(["--set", f"{node_id}.image={remote_name}"])
+                output = _run_comfy(*cmd)
+
             saved = _find_saved_file(output)
             if saved:
                 shutil.copy2(saved, str(img_path))
@@ -1380,11 +1548,14 @@ def comfy_mv_generate(
     data["scenes"] = all_scenes
     sb_path.write_text(json.dumps(data, indent=2))
 
-    return json.dumps({
+    out = {
         "status": "generated",
         **results,
         "total_scenes": len(target_scenes),
-    }, indent=2)
+    }
+    if warnings:
+        out["warnings"] = warnings
+    return json.dumps(out, indent=2)
 
 
 @mcp.tool()

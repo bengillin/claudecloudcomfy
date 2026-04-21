@@ -8,6 +8,6 @@
   "capabilities": ["img2vid"],
   "output_format": "mp4",
   "typical_time_seconds": 30,
-  "prompt_guide": "Describe motion and camera movement, not the scene (the image already provides that). Use temporal words: 'slowly', 'gradually', 'camera pans left', 'zooms in'. Focus on what changes: 'hair blowing in wind', 'cards tumbling through air'. Keep under 150 words. Avoid describing static elements already in the image.",
+  "prompt_guide": "Describe motion and camera movement, not the scene (the image already provides that). Use temporal words: 'slowly', 'gradually', 'camera pans left', 'zooms in'. Focus on what changes: 'hair blowing in wind', 'cards tumbling through air'. Keep under 150 words. Avoid describing static elements already in the image. CRITICAL: never ask for readable text, typography, logos, or lettering in the prompt — image-to-video models mangle text as the clip progresses, producing garbled nonsense letters. Refer to icons by shape, not by their written label.",
   "defaults": []
 }

@@ -10,6 +10,6 @@
   "capabilities": ["img2vid", "audio_input", "lip_sync"],
   "output_format": "mp4",
   "typical_time_seconds": 45,
-  "prompt_guide": "Describe motion, camera, and character action. This model takes audio input and lip-syncs characters to the vocals. For scenes with characters: describe them speaking, rapping, or singing. Include scene/character/action/camera structure. The audio drives lip movement and facial expression — you do NOT need to describe sounds. Duration is set separately (default 9s). Keep under 150 words.",
+  "prompt_guide": "Describe motion, camera, and character action. This model takes audio input and lip-syncs characters to the vocals. For scenes with characters: describe them speaking, rapping, or singing. Include scene/character/action/camera structure. The audio drives lip movement and facial expression — you do NOT need to describe sounds. Duration is set separately (default 9s). Keep under 150 words. CRITICAL: never ask for readable text, typography, logos, or lettering in the prompt — image-to-video models mangle text as the clip progresses, producing garbled nonsense letters. Refer to icons by shape (e.g. 'yellow envelope silhouette') not by their written label.",
   "defaults": []
 }

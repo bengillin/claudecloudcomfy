@@ -8,6 +8,6 @@
   "capabilities": ["img2vid", "audio"],
   "output_format": "mp4",
   "typical_time_seconds": 60,
-  "prompt_guide": "Describe motion, camera, and audio. This model generates synchronized audio. Include sound descriptions: 'whooshing sound', 'ambient music', 'crowd cheering'. Motion prompts same as wan22: temporal words, camera movement, what changes. Higher quality than wan22 but slower. Keep under 150 words.",
+  "prompt_guide": "Describe motion, camera, and audio. This model generates synchronized audio. Include sound descriptions: 'whooshing sound', 'ambient music', 'crowd cheering'. Motion prompts same as wan22: temporal words, camera movement, what changes. Higher quality than wan22 but slower. Keep under 150 words. CRITICAL: never ask for readable text, typography, logos, or lettering in the prompt — image-to-video models mangle text as the clip progresses, producing garbled nonsense letters. Refer to icons by shape, not by their written label.",
   "defaults": []
 }

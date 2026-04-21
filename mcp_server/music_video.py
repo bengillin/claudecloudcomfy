@@ -294,6 +294,89 @@ def merge_short_scenes(
     return merged
 
 
+# ── Step 4b: Beat-align long scenes ─────────────────────────────────────
+
+
+def split_long_scenes_on_beats(
+    scenes: list[Scene],
+    audio_path: str,
+    max_duration: float,
+    target_duration: float = 12.0,
+) -> tuple[list[Scene], dict]:
+    """Split any scene longer than max_duration on musical bar boundaries.
+
+    When Whisper produces a giant scene (e.g. a 120s instrumental with no
+    detected vocals, or sample-heavy music), fall back to librosa beat
+    tracking and cut at phrase boundaries near target_duration. Preserves
+    each scene's text and segment_type on the first subclip.
+
+    Returns (new_scenes, info). info is empty if nothing needed splitting.
+    """
+    needs_split = any(s.duration > max_duration for s in scenes)
+    if not needs_split:
+        return scenes, {}
+
+    import librosa
+    import numpy as np
+
+    y, sr = librosa.load(audio_path, sr=22050, mono=True)
+    tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
+    beat_times = librosa.frames_to_time(beat_frames, sr=sr)
+    tempo_bpm = float(tempo) if np.isscalar(tempo) else float(tempo[0])
+    sec_per_beat = 60.0 / tempo_bpm if tempo_bpm > 0 else 0.5
+    bar_beats = 4  # assume 4/4
+    # Beats per phrase — nearest multiple of bar_beats whose duration ≈ target
+    beats_per_phrase = max(bar_beats, round(target_duration / sec_per_beat / bar_beats) * bar_beats)
+
+    new_scenes: list[Scene] = []
+    split_count = 0
+    for s in scenes:
+        if s.duration <= max_duration:
+            new_scenes.append(s)
+            continue
+
+        split_count += 1
+        scene_beats = beat_times[(beat_times >= s.start) & (beat_times <= s.end)]
+
+        if len(scene_beats) < beats_per_phrase:
+            # No usable beat grid — fall back to even splits at target_duration
+            n_splits = max(2, int(round(s.duration / target_duration)))
+            step = s.duration / n_splits
+            cuts = [s.start + k * step for k in range(n_splits)] + [s.end]
+        else:
+            cuts = [s.start]
+            for idx in range(beats_per_phrase, len(scene_beats), beats_per_phrase):
+                candidate = float(scene_beats[idx])
+                # Only accept if it yields reasonable subclip lengths
+                if candidate - cuts[-1] >= max(3.0, target_duration * 0.4) and s.end - candidate >= 3.0:
+                    cuts.append(candidate)
+            cuts.append(s.end)
+
+        for k in range(len(cuts) - 1):
+            new_scenes.append(Scene(
+                id=-1,
+                start=cuts[k],
+                end=cuts[k + 1],
+                text=s.text if k == 0 else "",
+                segment_type=s.segment_type,
+                element_refs=list(s.element_refs) if k == 0 else [],
+                prompt=s.prompt if k == 0 else "",
+                motion_prompt=s.motion_prompt if k == 0 else "",
+                seed=s.seed,
+            ))
+
+    for i, sc in enumerate(new_scenes):
+        sc.id = i
+
+    return new_scenes, {
+        "tempo_bpm": round(tempo_bpm, 1),
+        "beats_per_phrase": beats_per_phrase,
+        "scenes_split": split_count,
+        "scene_count_before": len(scenes),
+        "scene_count_after": len(new_scenes),
+    }
+
+
 # ── Step 5: Stitch clips ────────────────────────────────────────────────
 
 
@@ -399,12 +482,17 @@ def plan(
     title: str,
     min_duration: float = 5.0,
     max_duration: float = 30.0,
-) -> Storyboard:
+) -> tuple[Storyboard, dict]:
     """Steps 1-2: Transcribe and build storyboard (no generation yet).
 
-    Returns a Storyboard with scenes that need prompts filled in.
+    Returns (Storyboard, info). info contains beat-analysis results and
+    warnings — e.g. sparse vocal coverage, scenes that still exceed
+    max_duration after splitting.
+
     Scenes are cut at natural transitions (segment type changes, gaps).
-    Min/max are guardrails — the song determines clip length.
+    When Whisper-based segmentation leaves any scene over max_duration
+    (instrumental / sample-heavy songs), we fall back to librosa beat
+    tracking and split on musical bar boundaries.
     """
     # Get audio duration
     result = subprocess.run(
@@ -425,6 +513,52 @@ def plan(
         max_duration=max_duration,
     )
 
+    warnings: list[dict] = []
+
+    # Vocal-coverage sanity check — if Whisper found very little speech,
+    # the scene structure is going to be a single giant instrumental blob.
+    vocal_seconds = sum(s.duration for s in scenes if s.text)
+    vocal_ratio = vocal_seconds / duration if duration > 0 else 0.0
+    if vocal_ratio < 0.2:
+        warnings.append({
+            "type": "sparse_vocals",
+            "message": (
+                f"Only {vocal_ratio*100:.0f}% of the track was transcribed as vocals — "
+                "likely sample-heavy or mostly instrumental. Scene cuts may not follow "
+                "the song's real structure. Consider providing the lyrics and/or "
+                "restructuring scenes manually."
+            ),
+            "vocal_seconds": round(vocal_seconds, 1),
+            "total_seconds": round(duration, 1),
+        })
+
+    # Beat-align any scenes that still exceed max_duration after merging.
+    beat_info: dict = {}
+    try:
+        scenes, beat_info = split_long_scenes_on_beats(
+            scenes, audio_path, max_duration=max_duration,
+        )
+    except Exception as e:  # librosa missing or audio load failure
+        warnings.append({
+            "type": "beat_analysis_failed",
+            "message": f"Could not run beat analysis for long-scene splitting: {e}",
+        })
+
+    # Final guardrail: warn if anything is still over max_duration.
+    over_max = [
+        {"id": s.id, "duration": round(s.duration, 1)}
+        for s in scenes if s.duration > max_duration
+    ]
+    if over_max:
+        warnings.append({
+            "type": "scene_exceeds_max_duration",
+            "message": (
+                f"{len(over_max)} scene(s) still exceed max_duration={max_duration}s — "
+                "a2v clips will hit model limits. Manually split these scenes."
+            ),
+            "scenes": over_max,
+        })
+
     # Auto-suggest 5W elements from lyrics
     all_text = " ".join(s.text for s in scenes if s.text).lower()
     suggested = _suggest_elements(all_text, title)
@@ -432,13 +566,15 @@ def plan(
     # Auto-assign elements to scenes and suggest prompts
     _assign_elements_to_scenes(scenes, suggested)
 
-    return Storyboard(
+    sb = Storyboard(
         title=title,
         audio_path=str(Path(audio_path).resolve()),
         duration=duration,
         scenes=scenes,
         elements=suggested,
     )
+    info = {"beat_info": beat_info, "warnings": warnings}
+    return sb, info
 
 
 def _assign_elements_to_scenes(scenes: list[Scene], elements: list[WorldElement]):
