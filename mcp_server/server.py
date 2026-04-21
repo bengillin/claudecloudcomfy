@@ -1160,12 +1160,21 @@ def comfy_mv_plan(
     height: int = 720,
     min_duration: float = 5.0,
     max_duration: float = 30.0,
+    lyrics: str | None = None,
 ) -> str:
     """Transcribe a song and build a music video storyboard with timed scenes.
 
-    Uses Whisper to transcribe the audio, then cuts scenes at natural
-    transitions — segment type changes, silence gaps, mood shifts.
-    Clip lengths vary based on what the song needs (5s min, 30s max guardrails).
+    Two modes depending on whether lyrics are provided:
+
+    1. **Lyrics mode** — pass `lyrics` (e.g. pasted from Genius with
+       [Verse]/[Chorus] markers). Whisper is skipped entirely; sections
+       become scenes, weighted by line count and beat-snapped via librosa.
+       Right for instrumental / sample-heavy / pitched-vocal tracks where
+       Whisper can't reliably detect structure.
+
+    2. **Whisper mode** (default) — transcribes the audio and cuts scenes
+       at natural transitions. Falls back to beat-based splits when any
+       scene exceeds max_duration.
 
     After calling this, review the scenes and set prompts with comfy_mv_set_prompts.
 
@@ -1177,10 +1186,12 @@ def comfy_mv_plan(
         height: Video height in pixels (default 720).
         min_duration: Minimum clip length guardrail (default 5s).
         max_duration: Maximum clip length guardrail (default 30s).
+        lyrics: Optional full lyrics text. When provided, skips Whisper and
+            structures scenes by [Section] markers.
     """
     from .music_video import plan, Storyboard
 
-    sb, plan_info = plan(audio_path, title, min_duration, max_duration)
+    sb, plan_info = plan(audio_path, title, min_duration, max_duration, lyrics=lyrics)
     sb.width = width
     sb.height = height
 

@@ -195,6 +195,27 @@
         <input type="file" accept="audio/*" @change="mvAudioFile = $event.target.files[0]" class="hidden">
         <span x-text="mvAudioFile ? mvAudioFile.name : 'Drop song here'" class="text-gray-400"></span>
       </label>
+
+      <!-- Optional lyrics — skips Whisper when provided -->
+      <details class="bg-gray-900 rounded-lg border border-gray-800" x-data="{open: false}" :open="open">
+        <summary @click.prevent="open = !open" class="cursor-pointer p-3 flex items-center justify-between">
+          <div>
+            <span class="text-sm font-medium">Lyrics</span>
+            <span class="text-xs text-gray-500 ml-2">optional — bypasses Whisper</span>
+          </div>
+          <span x-text="open ? '&#9650;' : '&#9660;'" class="text-gray-500"></span>
+        </summary>
+        <div class="p-3 pt-0 space-y-2 border-t border-gray-800">
+          <p class="text-xs text-gray-400">
+            For instrumental, sample-heavy, or pitched-vocal tracks where Whisper can't detect structure.
+            Paste full lyrics with <code class="bg-gray-800 px-1 rounded">[Verse 1]</code> / <code class="bg-gray-800 px-1 rounded">[Chorus]</code> markers —
+            each section becomes one or more scenes, beat-snapped to the song.
+          </p>
+          <textarea x-model="mvLyrics" rows="8" placeholder="[Intro]&#10;...&#10;&#10;[Verse 1]&#10;..."
+                    class="w-full bg-gray-950 border border-gray-800 rounded p-2 text-xs font-mono resize-y"></textarea>
+        </div>
+      </details>
+
       <div>
         <h2 class="text-sm font-medium text-gray-400 mb-2">Aspect Ratio</h2>
         <div class="flex gap-1.5 flex-wrap">
@@ -209,7 +230,7 @@
       </div>
       <button @click="mvPlan()" :disabled="!mvProject || !mvAudioFile || mvLoading"
               class="w-full bg-blue-600 hover:bg-blue-500 py-2 rounded-lg font-medium text-sm disabled:opacity-50">
-        <span x-text="mvLoading ? 'Transcribing...' : 'Plan Video'"></span>
+        <span x-text="mvLoading ? (mvLyrics ? 'Parsing lyrics…' : 'Transcribing…') : 'Plan Video'"></span>
       </button>
     </div>
 
@@ -631,6 +652,7 @@ function app() {
     mvProject: '',
     mvTitle: '',
     mvAudioFile: null,
+    mvLyrics: '',
     mvAspectRatio: { label: '16:9', w: 1280, h: 720 },
     mvScenes: [],
     mvElements: [],
@@ -741,6 +763,7 @@ function app() {
       fd.append('title', this.mvTitle || this.mvProject);
       fd.append('width', this.mvAspectRatio.w);
       fd.append('height', this.mvAspectRatio.h);
+      if (this.mvLyrics && this.mvLyrics.trim()) fd.append('lyrics', this.mvLyrics);
       const res = await fetch(`/api/mv/${this.mvProject}/plan`, { method: 'POST', body: fd }).then(r => r.json());
       this.mvScenes = res.scenes || [];
       this.mvPlanResult = {

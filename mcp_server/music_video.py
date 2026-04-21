@@ -1,6 +1,7 @@
 """Music video pipeline — audio-driven scene planning, generation, and stitching."""
 
 import json
+import re
 import subprocess
 import shutil
 import whisper
@@ -294,6 +295,125 @@ def merge_short_scenes(
     return merged
 
 
+# ── Step 2-alt: Build scenes from user-provided lyrics ──────────────────
+
+
+_SECTION_TYPE_KEYWORDS = [
+    ("drop", ["drop", "beat drop"]),
+    ("chorus", ["chorus", "hook", "refrain"]),
+    ("pre-chorus", ["pre-chorus", "pre chorus", "prechorus", "build", "rise"]),
+    ("verse", ["verse", "rap"]),
+    ("bridge", ["bridge"]),
+    ("intro", ["intro", "opening"]),
+    ("outro", ["outro", "ending", "coda"]),
+    ("breakdown", ["breakdown", "break"]),
+    ("interlude", ["interlude"]),
+]
+
+
+def _segment_type_from_section_name(name: str) -> str:
+    n = (name or "").lower()
+    for seg_type, keywords in _SECTION_TYPE_KEYWORDS:
+        if any(k in n for k in keywords):
+            return seg_type
+    return "verse"
+
+
+def _parse_lyrics_sections(lyrics: str) -> list[tuple[str, list[str]]]:
+    """Parse lyrics into [(section_name, [content_lines]), ...].
+
+    Recognizes `[Verse 1]`, `[Chorus]`, `(Hook)`, `# Verse`, etc. as section
+    markers. Everything before the first marker becomes an implicit 'intro'.
+    If no markers are found at all, the whole block becomes a single 'verse'.
+    """
+    section_pattern = re.compile(r"^\s*[\[\(\#]\s*([^\]\)\#]+?)\s*[\]\)\#]?\s*$")
+    sections: list[tuple[str, list[str]]] = []
+    current_name: str | None = None
+    current_lines: list[str] = []
+    for raw in lyrics.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        m = section_pattern.match(line)
+        # Match only tight marker lines — not stray brackets mid-verse.
+        is_marker = bool(m) and len(line) <= 60 and any(c in line for c in "[](){}#")
+        if is_marker:
+            if current_name is not None or current_lines:
+                sections.append((current_name or "intro", current_lines))
+            current_name = m.group(1).strip()
+            current_lines = []
+        else:
+            current_lines.append(line)
+    if current_name is not None or current_lines:
+        sections.append((current_name or "verse", current_lines))
+    return sections
+
+
+def scenes_from_lyrics(
+    lyrics: str,
+    duration: float,
+    audio_path: str,
+    min_duration: float = 5.0,
+    max_duration: float = 30.0,
+    target_duration: float = 12.0,
+) -> tuple[list[Scene], dict]:
+    """Build scenes from user-provided lyrics, beat-snapped to the song.
+
+    Strategy:
+      1. Parse [Section] markers into (name, lines) groups.
+      2. Weight each section's time slice by its line count (longer sections =
+         more time). Unless weight-of-one-line-in-a-3-min-song < min_duration,
+         in which case floor at min_duration.
+      3. Hand the resulting scenes through split_long_scenes_on_beats so any
+         section longer than max_duration gets subdivided on musical bars.
+
+    Returns (scenes, info). info carries tempo, section count, final scene count.
+    """
+    sections = _parse_lyrics_sections(lyrics)
+    if not sections:
+        sections = [("verse", [lyrics.strip()] if lyrics.strip() else [])]
+
+    weights = [max(1, len(lines)) for _, lines in sections]
+    total_weight = sum(weights)
+    portions = [(w / total_weight) * duration for w in weights]
+
+    # Floor each section at min_duration by stealing from the longest neighbor.
+    # Avoid producing a 2s scene just because one line had 4 words.
+    for i, p in enumerate(portions):
+        if p < min_duration and duration >= min_duration * len(sections):
+            deficit = min_duration - p
+            donor = max(range(len(portions)), key=lambda j: portions[j] if j != i else -1)
+            portions[donor] -= deficit
+            portions[i] = min_duration
+
+    scenes: list[Scene] = []
+    cursor = 0.0
+    for idx, ((name, lines), portion) in enumerate(zip(sections, portions)):
+        start = cursor
+        end = cursor + portion if idx < len(sections) - 1 else duration
+        scenes.append(Scene(
+            id=idx,
+            start=round(start, 3),
+            end=round(end, 3),
+            text=" ".join(lines),
+            segment_type=_segment_type_from_section_name(name),
+        ))
+        cursor = end
+
+    scenes, beat_info = split_long_scenes_on_beats(
+        scenes, audio_path, max_duration=max_duration, target_duration=target_duration,
+    )
+
+    info = {
+        "source": "user_lyrics",
+        "section_count": len(sections),
+        "scene_count": len(scenes),
+    }
+    if beat_info:
+        info.update(beat_info)
+    return scenes, info
+
+
 # ── Step 4b: Beat-align long scenes ─────────────────────────────────────
 
 
@@ -482,17 +602,21 @@ def plan(
     title: str,
     min_duration: float = 5.0,
     max_duration: float = 30.0,
+    lyrics: str | None = None,
 ) -> tuple[Storyboard, dict]:
-    """Steps 1-2: Transcribe and build storyboard (no generation yet).
+    """Steps 1-2: Build a storyboard from audio (no generation yet).
+
+    If `lyrics` is provided and non-empty, skip Whisper entirely: parse
+    [Section] markers into scenes, distribute time proportionally to line
+    count, then beat-snap long sections via librosa. This is the right
+    path for instrumental / sample-heavy / pitched-vocal songs where
+    Whisper can't detect structure.
+
+    Otherwise, transcribe with Whisper and cut at natural transitions,
+    falling back to beat-based splits when any scene exceeds max_duration.
 
     Returns (Storyboard, info). info contains beat-analysis results and
-    warnings — e.g. sparse vocal coverage, scenes that still exceed
-    max_duration after splitting.
-
-    Scenes are cut at natural transitions (segment type changes, gaps).
-    When Whisper-based segmentation leaves any scene over max_duration
-    (instrumental / sample-heavy songs), we fall back to librosa beat
-    tracking and split on musical bar boundaries.
+    warnings.
     """
     # Get audio duration
     result = subprocess.run(
@@ -502,47 +626,61 @@ def plan(
     )
     duration = float(result.stdout.strip())
 
-    # Transcribe
-    segments = transcribe(audio_path)
-
-    # Build scenes
-    scenes = segments_to_scenes(segments, duration)
-    scenes = merge_short_scenes(
-        scenes,
-        min_duration=min_duration,
-        max_duration=max_duration,
-    )
-
     warnings: list[dict] = []
-
-    # Vocal-coverage sanity check — if Whisper found very little speech,
-    # the scene structure is going to be a single giant instrumental blob.
-    vocal_seconds = sum(s.duration for s in scenes if s.text)
-    vocal_ratio = vocal_seconds / duration if duration > 0 else 0.0
-    if vocal_ratio < 0.2:
-        warnings.append({
-            "type": "sparse_vocals",
-            "message": (
-                f"Only {vocal_ratio*100:.0f}% of the track was transcribed as vocals — "
-                "likely sample-heavy or mostly instrumental. Scene cuts may not follow "
-                "the song's real structure. Consider providing the lyrics and/or "
-                "restructuring scenes manually."
-            ),
-            "vocal_seconds": round(vocal_seconds, 1),
-            "total_seconds": round(duration, 1),
-        })
-
-    # Beat-align any scenes that still exceed max_duration after merging.
     beat_info: dict = {}
-    try:
-        scenes, beat_info = split_long_scenes_on_beats(
-            scenes, audio_path, max_duration=max_duration,
+
+    if lyrics and lyrics.strip():
+        # User-provided lyrics — skip Whisper, parse sections, beat-snap.
+        try:
+            scenes, beat_info = scenes_from_lyrics(
+                lyrics, duration, audio_path,
+                min_duration=min_duration,
+                max_duration=max_duration,
+            )
+        except Exception as e:
+            warnings.append({
+                "type": "lyrics_parse_failed",
+                "message": f"Could not parse provided lyrics ({e}) — falling back to Whisper.",
+            })
+            lyrics = None  # trigger the Whisper branch below
+
+    if not (lyrics and lyrics.strip()):
+        # Whisper branch
+        segments = transcribe(audio_path)
+        scenes = segments_to_scenes(segments, duration)
+        scenes = merge_short_scenes(
+            scenes,
+            min_duration=min_duration,
+            max_duration=max_duration,
         )
-    except Exception as e:  # librosa missing or audio load failure
-        warnings.append({
-            "type": "beat_analysis_failed",
-            "message": f"Could not run beat analysis for long-scene splitting: {e}",
-        })
+
+        # Vocal-coverage sanity check — if Whisper found very little speech,
+        # the scene structure is going to be a single giant instrumental blob.
+        vocal_seconds = sum(s.duration for s in scenes if s.text)
+        vocal_ratio = vocal_seconds / duration if duration > 0 else 0.0
+        if vocal_ratio < 0.2:
+            warnings.append({
+                "type": "sparse_vocals",
+                "message": (
+                    f"Only {vocal_ratio*100:.0f}% of the track was transcribed as vocals — "
+                    "likely sample-heavy or mostly instrumental. Scene cuts may not follow "
+                    "the song's real structure. Paste the lyrics into the 'Lyrics (optional)' "
+                    "field and re-plan to structure scenes by song sections instead."
+                ),
+                "vocal_seconds": round(vocal_seconds, 1),
+                "total_seconds": round(duration, 1),
+            })
+
+        # Beat-align any scenes that still exceed max_duration after merging.
+        try:
+            scenes, beat_info = split_long_scenes_on_beats(
+                scenes, audio_path, max_duration=max_duration,
+            )
+        except Exception as e:  # librosa missing or audio load failure
+            warnings.append({
+                "type": "beat_analysis_failed",
+                "message": f"Could not run beat analysis for long-scene splitting: {e}",
+            })
 
     # Final guardrail: warn if anything is still over max_duration.
     over_max = [

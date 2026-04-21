@@ -211,12 +211,21 @@ async def api_mv_plan(
     title: str = Form(""),
     width: int = Form(1280),
     height: int = Form(720),
+    lyrics: str = Form(""),
 ):
     suffix = Path(file.filename or "audio.mp3").suffix
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(await file.read())
         audio_path = tmp.name
-    return _j(await _bg(comfy_mv_plan, audio_path=audio_path, title=title or project, project_name=project, width=width, height=height))
+    return _j(await _bg(
+        comfy_mv_plan,
+        audio_path=audio_path,
+        title=title or project,
+        project_name=project,
+        width=width,
+        height=height,
+        lyrics=lyrics or None,
+    ))
 
 
 @app.get("/api/mv/{project}/brief")
