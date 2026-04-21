@@ -174,11 +174,14 @@
       </div>
       <div class="space-y-1 max-h-48 overflow-y-auto">
         <template x-for="p in mvProjects" :key="p.name">
-          <button @click="mvLoadProject(p.name)" class="w-full text-left p-2 rounded hover:bg-gray-800 flex items-center gap-2">
-            <span class="text-sm flex-1" x-text="p.title"></span>
-            <span class="text-xs text-gray-500" x-text="p.scene_count + ' scenes'"></span>
-            <span class="text-xs" :class="p.has_final ? 'text-green-400' : 'text-gray-600'" x-text="p.has_final ? '&#9679; final' : (p.clip_count + '/' + p.scene_count + ' clips')"></span>
-          </button>
+          <div class="flex items-center gap-1 rounded hover:bg-gray-800 group">
+            <button @click="mvLoadProject(p.name)" class="flex-1 text-left p-2 flex items-center gap-2">
+              <span class="text-sm flex-1" x-text="p.title"></span>
+              <span class="text-xs text-gray-500" x-text="p.scene_count + ' scenes'"></span>
+              <span class="text-xs" :class="p.has_final ? 'text-green-400' : 'text-gray-600'" x-text="p.has_final ? '&#9679; final' : (p.clip_count + '/' + p.scene_count + ' clips')"></span>
+            </button>
+            <button @click.stop="mvDeleteProject(p.name)" class="text-gray-600 hover:text-red-400 px-2 py-1 opacity-0 group-hover:opacity-100" title="Delete project">&#128465;</button>
+          </div>
         </template>
       </div>
     </div>
@@ -531,6 +534,14 @@
       </button>
       <button @click="mvStep=4" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-lg text-sm">Review →</button>
     </div>
+    <div class="flex gap-2 text-xs">
+      <button @click="mvSavePrompts(); mvStartGenerate('images')" :disabled="mvGenStatus?.generating"
+              class="flex-1 bg-gray-800 hover:bg-gray-700 py-1.5 rounded disabled:opacity-50">Images only</button>
+      <button @click="mvStartGenerate('audio')" :disabled="mvGenStatus?.generating"
+              class="flex-1 bg-gray-800 hover:bg-gray-700 py-1.5 rounded disabled:opacity-50">Audio only</button>
+      <button @click="mvStartGenerate('clips')" :disabled="mvGenStatus?.generating"
+              class="flex-1 bg-gray-800 hover:bg-gray-700 py-1.5 rounded disabled:opacity-50">Clips only</button>
+    </div>
   </div>
 
   <!-- Step 4: Review & Stitch -->
@@ -827,13 +838,31 @@ function app() {
       this.mvPromptsWarnings = res.warnings || [];
     },
 
-    async mvStartGenerate() {
+    async mvStartGenerate(step = null) {
+      // step ∈ {null, 'images', 'audio', 'clips'} — null runs the full pipeline.
+      // When re-running 'images', also clear local thumbnails so polling picks up the new ones.
+      if (step === 'images') {
+        for (const s of this.mvScenes) s.image_path = '';
+      }
+      const body = step ? { step } : {};
       await fetch(`/api/mv/${this.mvProject}/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
+        body: JSON.stringify(body)
       });
       this.mvPollStatus();
+    },
+
+    async mvDeleteProject(name) {
+      if (!confirm(`Delete project "${name}" and all its scenes/clips? This cannot be undone.`)) return;
+      await fetch(`/api/mv/${name}`, { method: 'DELETE' });
+      if (this.mvProject === name) {
+        this.mvProject = '';
+        this.mvScenes = [];
+        this.mvElements = [];
+        this.mvStep = 0;
+      }
+      await this.mvLoadProjects();
     },
 
     mvPollStatus() {

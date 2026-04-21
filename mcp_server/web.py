@@ -401,6 +401,25 @@ async def api_mv_projects():
     return {"projects": out}
 
 
+@app.delete("/api/mv/{project}")
+async def api_mv_delete(project: str):
+    """Delete a music-video project directory (storyboard + scenes + clips + segments + elements)."""
+    import shutil
+    proj = PROJECTS_DIR / project
+    # Guard: must be under PROJECTS_DIR, must look like a real project.
+    try:
+        proj_resolved = proj.resolve()
+        if not proj_resolved.is_relative_to(PROJECTS_DIR.resolve()):
+            return JSONResponse({"error": "invalid project path"}, 400)
+    except Exception:
+        return JSONResponse({"error": "invalid project path"}, 400)
+    if not proj.exists() or not (proj / "storyboard.json").exists():
+        return JSONResponse({"error": "project not found"}, 404)
+    shutil.rmtree(proj)
+    _mv_state.pop(project, None)
+    return {"status": "deleted", "project": project}
+
+
 @app.get("/api/mv/{project}/load")
 async def api_mv_load(project: str):
     """Full storyboard snapshot so the UI can resume a project (brief + scenes + aspect ratio)."""
