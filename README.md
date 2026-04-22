@@ -81,8 +81,9 @@ Claude will:
 4. **Plan scenes** — Claude decides cut points aligned to downbeats and lyric phrases, auto-assigns approved elements per scene, writes visual + motion prompts
 5. **Compose scene images** from approved references — single-element scenes use the element ref directly, multi-element scenes compose via `qwen-edit-2ref` / `qwen-edit-3ref` to preserve identity of character + location + prop together
 6. **Animate** with audio-conditioned lip sync (LTX 2.3 a2v) — characters rap to the actual track. For hyperactive / sample-heavy songs, attach **shots** per scene via `comfy_mv_set_shots` — lipsync shots give you multiple camera angles of the same performer still lip-synced (each gets its own audio slice), broll shots are silent `wan22-i2v` cutaways, and both cut rapidly within the scene window to match song energy
-7. **Stitch** all clips + overlay the original audio. Scenes with shots expand in order; the stitch respects shot durations so the edit matches the beat grid
+7. **Stitch** all clips + overlay the original audio. Scenes with shots expand in order; the stitch respects shot durations so the edit matches the beat grid (clips are pre-normalized to consistent fps/codec to prevent concat drift)
 8. **Refine** — view output, tweak prompts, regenerate specific scenes, re-stitch. Pipeline warnings (missing refs, short audio, mismatched durations) surface in both MCP responses and the web UI
+9. **Document (optional, any time)** — call `comfy_mv_production_doc` to generate a PDF snapshot of the project state (cover, brief, world elements with thumbnails, scene structure, every shot with its start-frame thumbnail + prompt + motion prompt, pipeline reference, file inventory). Adapts to the current stage — sections without data are skipped. Useful as a collaboration artifact at plan / brief / shot / final checkpoints
 
 The creative brief is the shared contract between Claude and the user — Claude proposes the artistic vision, user iterates via CLI or web UI. Characters maintain visual consistency through approved reference images. The `ltx23-a2v` preset encodes real audio into the latent space — characters lip-sync to vocals, and motion follows the beat. The storyboard persists as JSON for resume and refinement across sessions.
 
@@ -279,7 +280,7 @@ Export any workflow from ComfyUI Cloud as API-format JSON, then:
 | `.mcp.json` | Claude Code auto-connection config |
 | `tests/test_server.py` | 37 tests — presets, tools, errors, projects, shots, production doc (no API calls) |
 | `.github/workflows/` | CI — runs tests on push/PR via GitHub Actions |
-| `pyproject.toml` | Python project config (uv, FastAPI, whisper) |
+| `pyproject.toml` | Python project config (uv, FastAPI, whisper, fpdf2) |
 | `presets/` | 8 preset configs + workflow JSONs (all verified) |
 | `projects/` | Creative project tracking (created by MCP tools) |
 | `downloads/` | Generated outputs land here |
@@ -291,7 +292,7 @@ Export any workflow from ComfyUI Cloud as API-format JSON, then:
 
 - **CLI only**: bash, curl — that's it
 - **Web UI / MCP server**: [uv](https://docs.astral.sh/uv/) (Python package manager)
-- **Music video pipeline**: adds [whisper](https://github.com/openai/whisper) (auto-installed by `uv sync`)
+- **Music video pipeline**: adds [whisper](https://github.com/openai/whisper) + [fpdf2](https://py-pdf.github.io/fpdf2/) for production PDFs (auto-installed by `uv sync`)
 - **Claude Code**: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI
 - A [Comfy Cloud](https://www.comfy.org/cloud/pricing) subscription (API key)
 - Optional: [wscat](https://github.com/websockets/wscat) or [websocat](https://github.com/vi/websocat) for WebSocket monitoring
