@@ -80,8 +80,8 @@ Claude will:
 3. **World build** — user uploads reference images for elements they have visuals for, approves Claude's suggestions for the rest. Claude generates references from source images (qwen-edit) or from scratch (z-turbo), plus multi-angle character sheets
 4. **Plan scenes** — Claude decides cut points aligned to downbeats and lyric phrases, auto-assigns approved elements per scene, writes visual + motion prompts
 5. **Compose scene images** from approved references — single-element scenes use the element ref directly, multi-element scenes compose via `qwen-edit-2ref` / `qwen-edit-3ref` to preserve identity of character + location + prop together
-6. **Animate** with audio-conditioned lip sync (LTX 2.3 a2v) — characters rap to the actual track
-7. **Stitch** all clips + overlay the original audio
+6. **Animate** with audio-conditioned lip sync (LTX 2.3 a2v) — characters rap to the actual track. For hyperactive / sample-heavy songs, attach **shots** per scene via `comfy_mv_set_shots` — lipsync shots give you multiple camera angles of the same performer still lip-synced (each gets its own audio slice), broll shots are silent `wan22-i2v` cutaways, and both cut rapidly within the scene window to match song energy
+7. **Stitch** all clips + overlay the original audio. Scenes with shots expand in order; the stitch respects shot durations so the edit matches the beat grid
 8. **Refine** — view output, tweak prompts, regenerate specific scenes, re-stitch. Pipeline warnings (missing refs, short audio, mismatched durations) surface in both MCP responses and the web UI
 
 The creative brief is the shared contract between Claude and the user — Claude proposes the artistic vision, user iterates via CLI or web UI. Characters maintain visual consistency through approved reference images. The `ltx23-a2v` preset encodes real audio into the latent space — characters lip-sync to vocals, and motion follows the beat. The storyboard persists as JSON for resume and refinement across sessions.
@@ -118,7 +118,8 @@ Works bidirectionally: Claude Code CLI and the web UI (`uv run python -m mcp_ser
 | `comfy_mv_list_elements` | List elements with reference image status |
 | `comfy_mv_update_element` | Refine element description or remove bad references |
 | `comfy_mv_set_prompts` | Set visual/motion prompts per scene |
-| `comfy_mv_generate` | Generate images, split audio, create video clips |
+| `comfy_mv_set_shots` | Attach internal cuts (alt angles + B-roll) within a scene for hyperactive pacing |
+| `comfy_mv_generate` | Generate images, split audio, create video clips (handles scenes + shots) |
 | `comfy_mv_stitch` | Concatenate clips + overlay original audio |
 | `comfy_mv_status` | Check project progress and find failures |
 
@@ -268,13 +269,13 @@ Export any workflow from ComfyUI Cloud as API-format JSON, then:
 | File/Dir | Description |
 |----------|-------------|
 | `comfy.sh` | CLI — every API endpoint + gen, animate, batch, presets, monitoring |
-| `mcp_server/server.py` | FastMCP server — 29 tools, 2 resources, 2 prompts |
+| `mcp_server/server.py` | FastMCP server — 30 tools, 2 resources, 2 prompts |
 | `mcp_server/web.py` | FastAPI web server — wraps MCP tools as REST endpoints |
 | `mcp_server/static/index.html` | Web UI — Studio + Music Video modes, zero build step |
 | `mcp_server/music_video.py` | Music video pipeline — transcription, scene planning, stitching |
 | `mcp_server/config.py` | Path resolution + .env loading |
 | `.mcp.json` | Claude Code auto-connection config |
-| `tests/test_server.py` | 29 tests — presets, tools, errors, projects (no API calls) |
+| `tests/test_server.py` | 32 tests — presets, tools, errors, projects, shots (no API calls) |
 | `.github/workflows/` | CI — runs tests on push/PR via GitHub Actions |
 | `pyproject.toml` | Python project config (uv, FastAPI, whisper) |
 | `presets/` | 8 preset configs + workflow JSONs (all verified) |

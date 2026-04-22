@@ -107,7 +107,7 @@ def test_run_comfy_failure():
 
 def test_mcp_has_tools():
     tools = mcp._tool_manager._tools
-    assert len(tools) == 29
+    assert len(tools) == 30
 
 
 def test_mcp_expected_tools_registered():
@@ -139,6 +139,7 @@ def test_mcp_expected_tools_registered():
         "comfy_mv_update_element",
         "comfy_mv_plan",
         "comfy_mv_set_prompts",
+        "comfy_mv_set_shots",
         "comfy_mv_generate",
         "comfy_mv_stitch",
         "comfy_mv_status",
@@ -257,6 +258,100 @@ def test_project_lifecycle(tmp_path):
         # Not found
         result = json.loads(comfy_project_status(name="nope"))
         assert "error" in result
+
+
+# ── Shot-level MV pipeline ───────────────────────────────────────────
+
+
+def test_shot_file_stem():
+    from mcp_server.server import _shot_file_stem
+    assert _shot_file_stem(0, "a") == "scene_000_shot_a"
+    assert _shot_file_stem(12, "broll1") == "scene_012_shot_broll1"
+    # Non-alphanumerics get sanitized so the stem is filesystem-safe
+    assert _shot_file_stem(3, "b.c/d") == "scene_003_shot_b_c_d"
+
+
+def test_mv_set_shots_validates_input(tmp_path):
+    from mcp_server.server import comfy_mv_set_shots
+
+    # Seed a storyboard with one scene
+    proj = tmp_path / "s"
+    proj.mkdir()
+    sb = {
+        "title": "t", "audio_path": "", "duration": 10,
+        "scenes": [{"id": 0, "start": 0, "end": 10, "text": "", "segment_type": "verse",
+                    "element_refs": [], "prompt": "", "motion_prompt": "", "seed": 0}],
+        "elements": [],
+    }
+    (proj / "storyboard.json").write_text(json.dumps(sb))
+
+    with patch("mcp_server.server.PROJECTS_DIR", tmp_path):
+        # Missing id → error
+        r = json.loads(comfy_mv_set_shots("s", 0, [{"type": "lipsync", "duration": 3, "prompt": "x"}]))
+        assert "error" in r
+
+        # Invalid type → error
+        r = json.loads(comfy_mv_set_shots("s", 0, [{"id": "a", "type": "foo", "duration": 3, "prompt": "x"}]))
+        assert "error" in r
+
+        # Duplicate id → error
+        r = json.loads(comfy_mv_set_shots("s", 0, [
+            {"id": "a", "type": "lipsync", "duration": 3, "prompt": "x"},
+            {"id": "a", "type": "broll", "duration": 3, "prompt": "y"},
+        ]))
+        assert "error" in r
+
+        # Scene not found → error
+        r = json.loads(comfy_mv_set_shots("s", 99, [{"id": "a", "type": "lipsync", "duration": 3, "prompt": "x"}]))
+        assert "error" in r
+
+        # Happy path — 3 shots sum to 10s, scene is 10s, no warnings
+        r = json.loads(comfy_mv_set_shots("s", 0, [
+            {"id": "a", "type": "lipsync", "duration": 4, "prompt": "wide"},
+            {"id": "b", "type": "broll", "duration": 2, "prompt": "insert"},
+            {"id": "c", "type": "lipsync", "duration": 4, "prompt": "close"},
+        ]))
+        assert r["status"] == "updated"
+        assert r["shot_count"] == 3
+        assert r["total_shot_duration"] == 10.0
+        assert "warnings" not in r
+
+        # Duration drift > 2s → warning
+        r = json.loads(comfy_mv_set_shots("s", 0, [
+            {"id": "a", "type": "lipsync", "duration": 20, "prompt": "x"},
+        ]))
+        assert "warnings" in r
+
+
+def test_mv_set_shots_persists_and_clears(tmp_path):
+    from mcp_server.server import comfy_mv_set_shots
+
+    proj = tmp_path / "s"
+    proj.mkdir()
+    sb = {
+        "title": "t", "audio_path": "", "duration": 10,
+        "scenes": [{"id": 0, "start": 0, "end": 10, "text": "", "segment_type": "verse",
+                    "element_refs": [], "prompt": "", "motion_prompt": "", "seed": 0}],
+        "elements": [],
+    }
+    (proj / "storyboard.json").write_text(json.dumps(sb))
+
+    with patch("mcp_server.server.PROJECTS_DIR", tmp_path):
+        # Set
+        comfy_mv_set_shots("s", 0, [
+            {"id": "a", "type": "lipsync", "duration": 5, "prompt": "one"},
+            {"id": "b", "type": "broll", "duration": 5, "prompt": "two", "motion_prompt": "pan"},
+        ])
+        data = json.loads((proj / "storyboard.json").read_text())
+        shots = data["scenes"][0]["shots"]
+        assert len(shots) == 2
+        assert shots[0]["id"] == "a" and shots[0]["type"] == "lipsync"
+        assert shots[1]["motion_prompt"] == "pan"
+
+        # Empty list clears
+        comfy_mv_set_shots("s", 0, [])
+        data = json.loads((proj / "storyboard.json").read_text())
+        assert data["scenes"][0]["shots"] == []
 
 
 # ── Error classification ─────────────────────────────────────────────

@@ -42,13 +42,29 @@ multiple jobs without blocking, then collect results with `comfy_job_wait`:
 When given a song file:
 1. Call `comfy_mv_plan` → transcribe + build storyboard with timed scenes
 2. Review scenes, then call `comfy_mv_set_prompts` with visual + motion prompts per scene
-3. Call `comfy_mv_generate` → generates images (z-turbo 1280x720), splits audio, runs LTX 2.3 a2v
-4. Call `comfy_mv_status` to check progress and find failures
-5. Retry failed scenes: `comfy_mv_generate(scenes=[29])` to regenerate specific ones
-6. Call `comfy_mv_stitch` → concatenates clips + overlays original audio track
-7. View output, refine prompts, regenerate scenes as needed
+3. (Optional) For hyperactive songs, add internal cuts per scene with `comfy_mv_set_shots` — see below
+4. Call `comfy_mv_generate` → generates images, splits audio, runs LTX 2.3 a2v (and wan22-i2v for broll)
+5. Call `comfy_mv_status` to check progress and find failures
+6. Retry failed scenes: `comfy_mv_generate(scenes=[29])` to regenerate specific ones
+7. Call `comfy_mv_stitch` → concatenates clips + overlays original audio track
+8. View output, refine prompts, regenerate scenes as needed
 
 Preset `ltx23-a2v` is the audio-conditioned variant: image + audio segment → video synced to music.
+
+### Scenes vs shots (two-level editing)
+A scene is a narrative tent-pole keyed to a lyric section (verse, chorus, bridge) — usually 10–30s.
+For slow or mid-tempo songs one clip per scene works fine. For hyperactive / sample-heavy songs,
+a single 24s clip against frenetic audio feels like a slideshow. Attach shots to a scene to cut
+internally:
+
+- **lipsync shots** → `ltx23-a2v`, consume a slice of the scene's audio. Use for alternate camera
+  angles / framings of a performing character — they stay lip-synced because the audio slice matches.
+- **broll shots** → `wan22-i2v`, silent. Use for cutaways (props, environment, hands, inserts).
+
+Call `comfy_mv_set_shots(project_name, scene_id, shots)` per scene. Shot durations should sum to
+approximately the scene duration. The pipeline auto-skips the scene-level clip when shots are set.
+`comfy_mv_stitch` walks scenes in order and expands shots in order within each scene, then overlays
+the full original audio track so lipsync timing lines up with the song.
 
 ## Development
 - Python managed with `uv` (pyproject.toml)

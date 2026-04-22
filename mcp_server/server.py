@@ -1306,6 +1306,114 @@ def comfy_mv_set_prompts(
     return json.dumps(out, indent=2)
 
 
+@mcp.tool()
+@_handle_errors
+def comfy_mv_set_shots(
+    project_name: str,
+    scene_id: int,
+    shots: list[dict],
+) -> str:
+    """Set the shot list for a scene — internal cuts that make the edit cut faster.
+
+    A scene is a narrative tent-pole tied to a lyric section (e.g. a verse),
+    usually 10-30s. By default it produces one image and one a2v clip filling
+    that whole window, which feels static against hyperactive music. Attach
+    shots to cut within the scene — alternate camera angles and cutaways —
+    so the edit matches the song's energy.
+
+    Each shot entry must have:
+      - id (str): short slug unique within the scene, e.g. "a", "b", "broll1"
+      - type (str): "lipsync" (ltx23-a2v, consumes a slice of the scene's
+        audio — use for alternate angles of a performer) OR
+        "broll" (wan22-i2v, silent — use for cutaways, props, environment)
+      - duration (float): target length in seconds (recommended 2-8s)
+      - prompt (str): visual prompt for the shot's start frame
+      - motion_prompt (str, optional): camera/motion description for animation
+      - element_refs (list[str|dict], optional): element IDs; falls back to
+        the scene's element_refs when omitted
+      - seed (int, optional): shot-specific seed
+
+    Shots are played back in the order given. Their durations should sum to
+    approximately the scene duration — the final video length is the sum of
+    all shot durations plus any scenes without shots. Passing an empty list
+    clears shots, restoring the 1-clip-per-scene default.
+
+    Args:
+        project_name: Project directory name.
+        scene_id: Target scene ID.
+        shots: Ordered list of shot specs.
+    """
+    sb_path = PROJECTS_DIR / project_name / "storyboard.json"
+    if not sb_path.exists():
+        return json.dumps({"error": f"Project '{project_name}' not found"})
+
+    data = json.loads(sb_path.read_text())
+    scene = next((s for s in data["scenes"] if s["id"] == scene_id), None)
+    if scene is None:
+        return json.dumps({"error": f"Scene {scene_id} not found"})
+
+    scene_duration = scene["end"] - scene["start"]
+    warnings = []
+
+    # Validate shots
+    normalized = []
+    seen_ids = set()
+    total_duration = 0.0
+    for i, shot in enumerate(shots):
+        sid = str(shot.get("id", "")).strip()
+        if not sid:
+            return json.dumps({"error": f"Shot index {i} missing 'id'"})
+        if sid in seen_ids:
+            return json.dumps({"error": f"Duplicate shot id '{sid}' in scene {scene_id}"})
+        seen_ids.add(sid)
+
+        stype = shot.get("type", "lipsync")
+        if stype not in ("lipsync", "broll"):
+            return json.dumps({"error": f"Shot '{sid}' has invalid type '{stype}' (want 'lipsync' or 'broll')"})
+
+        dur = float(shot.get("duration", 0))
+        if dur <= 0:
+            return json.dumps({"error": f"Shot '{sid}' duration must be > 0"})
+        if stype == "lipsync" and dur > 30:
+            warnings.append(f"Shot '{sid}' lipsync duration {dur}s exceeds a2v sweet spot (>30s degrades).")
+        if stype == "broll" and dur > 8:
+            warnings.append(f"Shot '{sid}' broll duration {dur}s is long for wan22-i2v; consider splitting.")
+        total_duration += dur
+
+        normalized.append({
+            "id": sid,
+            "type": stype,
+            "duration": dur,
+            "prompt": shot.get("prompt", ""),
+            "motion_prompt": shot.get("motion_prompt", ""),
+            "element_refs": shot.get("element_refs") or scene.get("element_refs") or [],
+            "seed": int(shot.get("seed", scene.get("seed", 42 + scene_id) + i)),
+            "image_path": "",
+            "audio_path": "",
+            "video_path": "",
+        })
+
+    if shots and abs(total_duration - scene_duration) > 2.0:
+        warnings.append(
+            f"Shot durations sum to {total_duration:.1f}s but scene is {scene_duration:.1f}s "
+            f"— stitched video will be {total_duration - scene_duration:+.1f}s vs scene window."
+        )
+
+    scene["shots"] = normalized
+    sb_path.write_text(json.dumps(data, indent=2))
+
+    out = {
+        "status": "updated",
+        "scene_id": scene_id,
+        "shot_count": len(normalized),
+        "total_shot_duration": round(total_duration, 2),
+        "scene_duration": round(scene_duration, 2),
+    }
+    if warnings:
+        out["warnings"] = warnings
+    return json.dumps(out, indent=2)
+
+
 _NEG_PATTERN = re.compile(
     r"\b(?:no|without|avoid|never|not)\s+([a-z][a-z0-9 \-]{1,40}?)(?=[\.,;:!?\)]|\band\b|\bor\b|\bbut\b|$)",
     re.IGNORECASE,
@@ -1384,18 +1492,22 @@ def comfy_mv_generate(
     Runs the full pipeline or specific steps. Skips already-completed work
     (resume-safe). Use 'scenes' to regenerate specific scenes only.
 
-    Scene image generation is ref-aware: if a scene's element_refs include
-    elements with reference_images (generated via comfy_mv_generate_element),
-    the scene is composed through Qwen-Image-Edit 2509 with up to 3 refs
-    simultaneously — preserving character / location / prop identity across
-    clips. Scenes with no refs fall back to z-turbo txt2img.
+    Image generation is ref-aware: if a scene (or shot) has element_refs with
+    reference_images (generated via comfy_mv_generate_element), composition
+    goes through Qwen-Image-Edit 2509 with up to 3 refs simultaneously —
+    preserving character / location / prop identity across clips. Items
+    with no refs fall back to z-turbo txt2img.
+
+    When a scene has `shots` (set via comfy_mv_set_shots), generation operates
+    at the shot level: one image + one clip per shot, with audio sliced from
+    the scene's window for lipsync shots (ltx23-a2v) and silent wan22-i2v
+    clips for broll shots. Scenes without shots use the default 1-clip behavior.
 
     Args:
         project_name: Project directory name.
         scenes: Optional list of scene IDs to generate. None = all scenes.
         step: Optional step to run: "images", "audio", "clips", or None for all.
     """
-    import shutil
     project_dir = PROJECTS_DIR / project_name
     sb_path = project_dir / "storyboard.json"
     if not sb_path.exists():
@@ -1415,12 +1527,25 @@ def comfy_mv_generate(
     if scenes is not None:
         target_scenes = [s for s in all_scenes if s["id"] in scenes]
         # Clear existing files so they get regenerated
+        ext_by_key = {"image_path": "png", "audio_path": "wav", "video_path": "mp4"}
+        subdir_by_key = {"image_path": "scenes", "audio_path": "segments", "video_path": "clips"}
         for s in target_scenes:
-            for key, subdir in [("image_path", "scenes"), ("audio_path", "segments"), ("video_path", "clips")]:
-                path = project_dir / subdir / f"scene_{s['id']:03d}.{'png' if key == 'image_path' else 'wav' if key == 'audio_path' else 'mp4'}"
-                if path.exists():
-                    path.unlink()
-                s[key] = ""
+            s_shots = s.get("shots") or []
+            if s_shots:
+                # Clear per-shot files
+                for shot in s_shots:
+                    stem = _shot_file_stem(s["id"], shot["id"])
+                    for key, ext in ext_by_key.items():
+                        path = project_dir / subdir_by_key[key] / f"{stem}.{ext}"
+                        if path.exists():
+                            path.unlink()
+                        shot[key] = ""
+            else:
+                for key, ext in ext_by_key.items():
+                    path = project_dir / subdir_by_key[key] / f"scene_{s['id']:03d}.{ext}"
+                    if path.exists():
+                        path.unlink()
+                    s[key] = ""
     else:
         target_scenes = all_scenes
 
@@ -1450,68 +1575,60 @@ def comfy_mv_generate(
         })
 
     results = {"images": 0, "audio": 0, "clips": 0, "failed": []}
-    WIDTH, HEIGHT = 1280, 720
+    elements_by_id_for_gen = {e["id"]: e for e in data.get("elements", [])}
+
+    def _shot_absolute_start(scene_dict: dict, shot_index: int) -> float:
+        """Absolute timestamp (in the full song) where a scene's Nth shot begins."""
+        offset = sum(float(s.get("duration", 0)) for s in scene_dict["shots"][:shot_index])
+        return float(scene_dict["start"]) + offset
 
     # Step: Generate images
     if step in (None, "images"):
-        elements_by_id_for_gen = {e["id"]: e for e in data.get("elements", [])}
         for scene in target_scenes:
+            scene_shots = scene.get("shots") or []
+            if scene_shots:
+                # Shot-level image generation
+                for shot in scene_shots:
+                    if not shot.get("prompt"):
+                        continue
+                    stem = _shot_file_stem(scene["id"], shot["id"])
+                    img_path = project_dir / "scenes" / f"{stem}.png"
+                    if img_path.exists():
+                        shot["image_path"] = str(img_path)
+                        continue
+                    ok = _compose_image(
+                        prompt=shot["prompt"],
+                        element_refs=shot.get("element_refs") or scene.get("element_refs") or [],
+                        elements_by_id=elements_by_id_for_gen,
+                        vid_w=vid_w,
+                        vid_h=vid_h,
+                        seed=shot.get("seed", 42),
+                        output_path=img_path,
+                    )
+                    if ok:
+                        shot["image_path"] = str(img_path)
+                        results["images"] += 1
+                    else:
+                        results["failed"].append({"scene": scene["id"], "shot": shot["id"], "step": "image"})
+                continue
+
+            # Scene-level (no shots) — original behavior
             if not scene.get("prompt"):
                 continue
             img_path = project_dir / "scenes" / f"scene_{scene['id']:03d}.png"
             if img_path.exists():
                 scene["image_path"] = str(img_path)
                 continue
-
-            ref_paths = _collect_scene_refs(scene, elements_by_id_for_gen, max_refs=3)
-            seed = scene.get("seed", 42 + scene["id"])
-
-            if not ref_paths:
-                # No element refs — straight txt2img via z-turbo
-                output = _run_comfy(
-                    "gen", "--preset=z-turbo",
-                    "--prompt", scene["prompt"],
-                    f"--seed={seed}",
-                    "--set", f"57:13.width={vid_w}",
-                    "--set", f"57:13.height={vid_h}",
-                )
-            else:
-                # Compose scene from up to 3 element reference images via Qwen-Image-Edit 2509
-                uploaded = []
-                upload_ok = True
-                for p in ref_paths:
-                    remote = _upload_file(p)
-                    if not remote:
-                        upload_ok = False
-                        break
-                    uploaded.append(remote)
-                if not upload_ok:
-                    results["failed"].append({"scene": scene["id"], "step": "image", "reason": "ref upload failed"})
-                    continue
-
-                n = len(uploaded)
-                if n == 1:
-                    wf = "presets/qwen-edit_workflow.json"
-                    image_sets = [("78", uploaded[0])]
-                elif n == 2:
-                    wf = "presets/qwen-edit-2ref_workflow.json"
-                    image_sets = [("78", uploaded[0]), ("79", uploaded[1])]
-                else:
-                    wf = "presets/qwen-edit-3ref_workflow.json"
-                    image_sets = [("78", uploaded[0]), ("79", uploaded[1]), ("80", uploaded[2])]
-
-                cmd = [
-                    "go", wf,
-                    "--set", f"435.value={scene['prompt']}",
-                    "--set", f"433:3.seed={seed}",
-                ]
-                for node_id, remote_name in image_sets:
-                    cmd.extend(["--set", f"{node_id}.image={remote_name}"])
-                output = _run_comfy(*cmd)
-
-            saved = _find_saved_file(output)
-            if saved:
-                shutil.copy2(saved, str(img_path))
+            ok = _compose_image(
+                prompt=scene["prompt"],
+                element_refs=scene.get("element_refs") or [],
+                elements_by_id=elements_by_id_for_gen,
+                vid_w=vid_w,
+                vid_h=vid_h,
+                seed=scene.get("seed", 42 + scene["id"]),
+                output_path=img_path,
+            )
+            if ok:
                 scene["image_path"] = str(img_path)
                 results["images"] += 1
             else:
@@ -1519,25 +1636,75 @@ def comfy_mv_generate(
 
     # Step: Split audio
     if step in (None, "audio"):
-        import subprocess as sp
         seg_dir = project_dir / "segments"
         for scene in target_scenes:
+            scene_shots = scene.get("shots") or []
+            if scene_shots:
+                # Shot-level audio — only lipsync shots get audio slices
+                for i, shot in enumerate(scene_shots):
+                    if shot.get("type") != "lipsync":
+                        continue
+                    stem = _shot_file_stem(scene["id"], shot["id"])
+                    seg_path = seg_dir / f"{stem}.wav"
+                    if seg_path.exists():
+                        shot["audio_path"] = str(seg_path)
+                        continue
+                    abs_start = _shot_absolute_start(scene, i)
+                    ok = _slice_audio(audio_path, abs_start, float(shot["duration"]), seg_path)
+                    if ok:
+                        shot["audio_path"] = str(seg_path)
+                        results["audio"] += 1
+                    else:
+                        results["failed"].append({"scene": scene["id"], "shot": shot["id"], "step": "audio"})
+                continue
+
+            # Scene-level (no shots) — original behavior
             seg_path = seg_dir / f"scene_{scene['id']:03d}.wav"
             if seg_path.exists():
                 scene["audio_path"] = str(seg_path)
                 continue
             duration = scene["end"] - scene["start"]
-            sp.run([
-                "ffmpeg", "-y", "-i", audio_path,
-                "-ss", str(scene["start"]), "-t", str(duration),
-                "-ar", "44100", "-ac", "1", str(seg_path),
-            ], capture_output=True)
-            scene["audio_path"] = str(seg_path)
-            results["audio"] += 1
+            if _slice_audio(audio_path, float(scene["start"]), duration, seg_path):
+                scene["audio_path"] = str(seg_path)
+                results["audio"] += 1
 
     # Step: Generate video clips
     if step in (None, "clips"):
         for scene in target_scenes:
+            scene_shots = scene.get("shots") or []
+            if scene_shots:
+                # Shot-level clip generation
+                for shot in scene_shots:
+                    stem = _shot_file_stem(scene["id"], shot["id"])
+                    clip_path = project_dir / "clips" / f"{stem}.mp4"
+                    if clip_path.exists():
+                        shot["video_path"] = str(clip_path)
+                        continue
+                    if not shot.get("image_path"):
+                        results["failed"].append({"scene": scene["id"], "shot": shot["id"], "step": "clip", "reason": "missing image"})
+                        continue
+                    seed = int(shot.get("seed", 42))
+                    duration = float(shot["duration"])
+                    motion = shot.get("motion_prompt") or "cinematic motion"
+                    if shot.get("type") == "lipsync":
+                        if not shot.get("audio_path"):
+                            results["failed"].append({"scene": scene["id"], "shot": shot["id"], "step": "clip", "reason": "missing audio"})
+                            continue
+                        ok = _generate_a2v_clip(
+                            shot["image_path"], shot["audio_path"], motion, duration, seed, clip_path
+                        )
+                    else:
+                        ok = _generate_i2v_clip(
+                            shot["image_path"], motion, duration, seed, vid_w, vid_h, clip_path
+                        )
+                    if ok:
+                        shot["video_path"] = str(clip_path)
+                        results["clips"] += 1
+                    else:
+                        results["failed"].append({"scene": scene["id"], "shot": shot["id"], "step": "clip"})
+                continue
+
+            # Scene-level (no shots) — original behavior
             clip_path = project_dir / "clips" / f"scene_{scene['id']:03d}.mp4"
             if clip_path.exists():
                 scene["video_path"] = str(clip_path)
@@ -1545,28 +1712,16 @@ def comfy_mv_generate(
             if not scene.get("image_path") or not scene.get("audio_path"):
                 results["failed"].append({"scene": scene["id"], "step": "clip", "reason": "missing assets"})
                 continue
-
-            # Upload
-            img_remote = _upload_file(scene["image_path"])
-            audio_remote = _upload_file(scene["audio_path"])
-            if not img_remote or not audio_remote:
-                results["failed"].append({"scene": scene["id"], "step": "clip", "reason": "upload failed"})
-                continue
-
             duration = scene["end"] - scene["start"]
-
-            output = _run_comfy(
-                "go", "presets/ltx23-a2v_workflow.json",
-                "--set", f"269.image={img_remote}",
-                "--set", f"276.audio={audio_remote}",
-                "--set", f"340:319.value={scene.get('motion_prompt', 'cinematic motion')}",
-                "--set", f"340:331.value={duration}",
-                "--set", f"340:285.noise_seed={scene.get('seed', 42 + scene['id'])}",
-                timeout=300,
+            ok = _generate_a2v_clip(
+                scene["image_path"],
+                scene["audio_path"],
+                scene.get("motion_prompt", "cinematic motion"),
+                duration,
+                scene.get("seed", 42 + scene["id"]),
+                clip_path,
             )
-            saved = _find_saved_file(output)
-            if saved:
-                shutil.copy2(saved, str(clip_path))
+            if ok:
                 scene["video_path"] = str(clip_path)
                 results["clips"] += 1
             else:
@@ -1619,18 +1774,30 @@ def comfy_mv_stitch(
         output_filename = f"{safe_title}_Music_Video.mp4"
     output_path = project_dir / output_filename
 
-    # Build concat file
+    # Build concat file — walk scenes in order, expanding into shots where present.
+    # Each clip is paired with its duration so the ffmpeg concat demuxer honors
+    # the intended cut rhythm even when underlying clips drift by a frame.
     concat_file = project_dir / "concat.txt"
     lines = []
     valid = 0
     for scene in scenes:
-        vp = scene.get("video_path", "")
-        if vp and Path(vp).exists():
-            escaped = vp.replace("'", "'\\''")
-            lines.append(f"file '{escaped}'")
-            duration = scene["end"] - scene["start"]
-            lines.append(f"duration {duration:.3f}")
-            valid += 1
+        scene_shots = scene.get("shots") or []
+        if scene_shots:
+            for shot in scene_shots:
+                vp = shot.get("video_path", "")
+                if vp and Path(vp).exists():
+                    escaped = vp.replace("'", "'\\''")
+                    lines.append(f"file '{escaped}'")
+                    lines.append(f"duration {float(shot.get('duration', 0)):.3f}")
+                    valid += 1
+        else:
+            vp = scene.get("video_path", "")
+            if vp and Path(vp).exists():
+                escaped = vp.replace("'", "'\\''")
+                lines.append(f"file '{escaped}'")
+                duration = scene["end"] - scene["start"]
+                lines.append(f"duration {duration:.3f}")
+                valid += 1
 
     if not lines:
         return json.dumps({"error": "No valid clips to stitch"})
@@ -1685,16 +1852,43 @@ def comfy_mv_status(project_name: str) -> str:
     data = json.loads(sb_path.read_text())
     scenes = data["scenes"]
 
+    # Aggregate status for both scene-level and shot-level assets. Shots roll up
+    # into parent-scene counts so callers don't need to know which mode a scene
+    # is running in.
+    def _scene_image_ok(s: dict) -> bool:
+        shots = s.get("shots") or []
+        if shots:
+            return all(sh.get("image_path") and Path(sh["image_path"]).exists() for sh in shots)
+        return bool(s.get("image_path") and Path(s["image_path"]).exists())
+
+    def _scene_audio_ok(s: dict) -> bool:
+        shots = s.get("shots") or []
+        if shots:
+            lipsync = [sh for sh in shots if sh.get("type") == "lipsync"]
+            if not lipsync:
+                return True  # no lipsync shots means no audio needed
+            return all(sh.get("audio_path") and Path(sh["audio_path"]).exists() for sh in lipsync)
+        return bool(s.get("audio_path") and Path(s["audio_path"]).exists())
+
+    def _scene_clips_ok(s: dict) -> bool:
+        shots = s.get("shots") or []
+        if shots:
+            return all(sh.get("video_path") and Path(sh["video_path"]).exists() for sh in shots)
+        return bool(s.get("video_path") and Path(s["video_path"]).exists())
+
+    total_shots = sum(len(s.get("shots") or []) for s in scenes)
     status = {
         "title": data.get("title", ""),
         "duration": round(data.get("duration", 0), 1),
         "total_scenes": len(scenes),
+        "total_shots": total_shots,
+        "scenes_with_shots": sum(1 for s in scenes if s.get("shots")),
         "has_prompts": sum(1 for s in scenes if s.get("prompt")),
-        "has_images": sum(1 for s in scenes if s.get("image_path") and Path(s["image_path"]).exists()),
-        "has_audio": sum(1 for s in scenes if s.get("audio_path") and Path(s["audio_path"]).exists()),
-        "has_clips": sum(1 for s in scenes if s.get("video_path") and Path(s["video_path"]).exists()),
+        "has_images": sum(1 for s in scenes if _scene_image_ok(s)),
+        "has_audio": sum(1 for s in scenes if _scene_audio_ok(s)),
+        "has_clips": sum(1 for s in scenes if _scene_clips_ok(s)),
         "missing_prompts": [s["id"] for s in scenes if not s.get("prompt")],
-        "missing_clips": [s["id"] for s in scenes if not (s.get("video_path") and Path(s["video_path"]).exists())],
+        "missing_clips": [s["id"] for s in scenes if not _scene_clips_ok(s)],
     }
 
     output_candidates = list(project_dir.glob("*_Music_Video.mp4"))
@@ -1725,6 +1919,148 @@ def _upload_file(local_path: str) -> str | None:
         return data.get("name", "")
     except json.JSONDecodeError:
         return output.strip().splitlines()[-1].strip()
+
+
+# ── Shot-level helpers ───────────────────────────────────────────────────
+
+
+def _shot_file_stem(scene_id: int, shot_id: str) -> str:
+    """Filename stem for a shot — e.g. scene_003_shot_b."""
+    safe = re.sub(r"[^a-zA-Z0-9_-]", "_", str(shot_id))
+    return f"scene_{scene_id:03d}_shot_{safe}"
+
+
+def _compose_image(
+    prompt: str,
+    element_refs: list,
+    elements_by_id: dict,
+    vid_w: int,
+    vid_h: int,
+    seed: int,
+    output_path,
+) -> bool:
+    """Generate a start-frame image — qwen-edit-Nref if refs exist, else z-turbo.
+
+    Mirrors the scene-level image generation logic so shots and scenes share
+    one composition path. Returns True on success (writes to output_path).
+    """
+    import shutil
+    fake_scene = {"element_refs": element_refs}
+    ref_paths = _collect_scene_refs(fake_scene, elements_by_id, max_refs=3)
+
+    if not ref_paths:
+        output = _run_comfy(
+            "gen", "--preset=z-turbo",
+            "--prompt", prompt,
+            f"--seed={seed}",
+            "--set", f"57:13.width={vid_w}",
+            "--set", f"57:13.height={vid_h}",
+        )
+    else:
+        uploaded = []
+        for p in ref_paths:
+            remote = _upload_file(p)
+            if not remote:
+                return False
+            uploaded.append(remote)
+        n = len(uploaded)
+        if n == 1:
+            wf = "presets/qwen-edit_workflow.json"
+            image_sets = [("78", uploaded[0])]
+        elif n == 2:
+            wf = "presets/qwen-edit-2ref_workflow.json"
+            image_sets = [("78", uploaded[0]), ("79", uploaded[1])]
+        else:
+            wf = "presets/qwen-edit-3ref_workflow.json"
+            image_sets = [("78", uploaded[0]), ("79", uploaded[1]), ("80", uploaded[2])]
+        cmd = [
+            "go", wf,
+            "--set", f"435.value={prompt}",
+            "--set", f"433:3.seed={seed}",
+        ]
+        for node_id, remote_name in image_sets:
+            cmd.extend(["--set", f"{node_id}.image={remote_name}"])
+        output = _run_comfy(*cmd)
+
+    saved = _find_saved_file(output)
+    if not saved:
+        return False
+    shutil.copy2(saved, str(output_path))
+    return True
+
+
+def _slice_audio(audio_path: str, start: float, duration: float, output_path) -> bool:
+    """Extract a mono 44.1kHz WAV segment from audio_path."""
+    import subprocess as sp
+    r = sp.run([
+        "ffmpeg", "-y", "-i", audio_path,
+        "-ss", f"{start:.3f}", "-t", f"{duration:.3f}",
+        "-ar", "44100", "-ac", "1", str(output_path),
+    ], capture_output=True)
+    return r.returncode == 0 and Path(output_path).exists()
+
+
+def _generate_a2v_clip(
+    image_path: str,
+    audio_path: str,
+    motion_prompt: str,
+    duration: float,
+    seed: int,
+    output_path,
+) -> bool:
+    """Run ltx23-a2v — image + audio slice → lip-synced clip."""
+    import shutil
+    img_remote = _upload_file(image_path)
+    audio_remote = _upload_file(audio_path)
+    if not img_remote or not audio_remote:
+        return False
+    output = _run_comfy(
+        "go", "presets/ltx23-a2v_workflow.json",
+        "--set", f"269.image={img_remote}",
+        "--set", f"276.audio={audio_remote}",
+        "--set", f"340:319.value={motion_prompt or 'cinematic motion'}",
+        "--set", f"340:331.value={duration}",
+        "--set", f"340:285.noise_seed={seed}",
+        timeout=600,
+    )
+    saved = _find_saved_file(output)
+    if not saved:
+        return False
+    shutil.copy2(saved, str(output_path))
+    return True
+
+
+def _generate_i2v_clip(
+    image_path: str,
+    motion_prompt: str,
+    duration: float,
+    seed: int,
+    width: int,
+    height: int,
+    output_path,
+) -> bool:
+    """Run wan22-i2v — image + motion prompt → silent video clip (for broll cutaways)."""
+    import shutil
+    img_remote = _upload_file(image_path)
+    if not img_remote:
+        return False
+    # wan22-i2v runs at 16fps internally; length is frames.
+    length = max(16, int(round(duration * 16)))
+    output = _run_comfy(
+        "go", "presets/wan22-i2v_workflow.json",
+        "--set", f"97.image={img_remote}",
+        "--set", f"129:93.text={motion_prompt or 'subtle camera movement'}",
+        "--set", f"129:86.noise_seed={seed}",
+        "--set", f"129:98.length={length}",
+        "--set", f"129:98.width={width}",
+        "--set", f"129:98.height={height}",
+        timeout=600,
+    )
+    saved = _find_saved_file(output)
+    if not saved:
+        return False
+    shutil.copy2(saved, str(output_path))
+    return True
 
 
 # ── Entry point ──────────────────────────────────────────────────────────

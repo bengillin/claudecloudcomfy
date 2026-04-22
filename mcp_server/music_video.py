@@ -35,7 +35,22 @@ class SceneElementRef:
 
 @dataclass
 class Scene:
-    """A single scene in the music video."""
+    """A single scene in the music video.
+
+    A scene is a narrative tent-pole keyed to a lyric section. By default it
+    produces one image and one a2v clip matching its time window. For
+    higher-energy editing, attach a `shots` list to give the scene multiple
+    internal cuts — each shot is independently generated and stitched in
+    order. Shots come in two flavours:
+
+      - "lipsync": a slice of the scene's audio drives an ltx23-a2v clip
+        (use for alternate camera angles of a performing character).
+      - "broll":   no audio conditioning, wan22-i2v produces a silent clip
+        (use for cutaways — props, environment, hands, inserts).
+
+    When `shots` is present, the scene-level image/audio/video paths are
+    unused; per-shot paths live inside each shot dict.
+    """
     id: int
     start: float           # seconds
     end: float             # seconds
@@ -44,10 +59,11 @@ class Scene:
     element_refs: list[dict] = field(default_factory=list)  # SceneElementRef as dicts
     prompt: str = ""       # visual prompt for image generation
     motion_prompt: str = ""  # motion/camera prompt for animation
-    image_path: str = ""   # generated scene image
-    audio_path: str = ""   # extracted audio segment
-    video_path: str = ""   # generated video clip
+    image_path: str = ""   # generated scene image (unused if shots present)
+    audio_path: str = ""   # extracted audio segment (unused if shots present)
+    video_path: str = ""   # generated video clip (unused if shots present)
     seed: int = 0
+    shots: list[dict] = field(default_factory=list)  # optional internal cuts
 
     @property
     def duration(self) -> float:
