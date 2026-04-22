@@ -1781,8 +1781,10 @@ def comfy_mv_stitch(
     output_path = project_dir / output_filename
 
     # Build concat file — walk scenes in order, expanding into shots where present.
-    # Each clip is paired with its duration so the ffmpeg concat demuxer honors
-    # the intended cut rhythm even when underlying clips drift by a frame.
+    # Intentionally omit the "duration" hint: ffmpeg's concat demuxer pads clips
+    # when that hint exceeds the actual file length, which inflated the output
+    # well past the song. Let the real clip duration speak for itself; the final
+    # ffmpeg pass clamps to the song length so any drift doesn't matter.
     concat_file = project_dir / "concat.txt"
     lines = []
     valid = 0
@@ -1794,22 +1796,31 @@ def comfy_mv_stitch(
                 if vp and Path(vp).exists():
                     escaped = vp.replace("'", "'\\''")
                     lines.append(f"file '{escaped}'")
-                    lines.append(f"duration {float(shot.get('duration', 0)):.3f}")
                     valid += 1
         else:
             vp = scene.get("video_path", "")
             if vp and Path(vp).exists():
                 escaped = vp.replace("'", "'\\''")
                 lines.append(f"file '{escaped}'")
-                duration = scene["end"] - scene["start"]
-                lines.append(f"duration {duration:.3f}")
                 valid += 1
 
     if not lines:
         return json.dumps({"error": "No valid clips to stitch"})
     concat_file.write_text("\n".join(lines))
 
-    # Concat video
+    # Probe the song so we can clamp final output to it — avoids silent trailing
+    # video and avoids losing frames when the stitched clips happen to be longer.
+    audio_duration_probe = sp.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=nw=1:nk=1", audio_path],
+        capture_output=True, text=True,
+    )
+    try:
+        audio_seconds = float(audio_duration_probe.stdout.strip())
+    except ValueError:
+        audio_seconds = 0.0
+
+    # Concat video (re-encode because clips may differ in codec/colorspace)
     temp = project_dir / "temp_video.mp4"
     sp.run([
         "ffmpeg", "-y",
@@ -1819,14 +1830,17 @@ def comfy_mv_stitch(
         "-an", str(temp),
     ], capture_output=True)
 
-    # Overlay original audio
-    sp.run([
+    # Overlay original audio — explicit -t clamps to song length.
+    overlay_cmd = [
         "ffmpeg", "-y",
         "-i", str(temp), "-i", audio_path,
         "-c:v", "copy", "-c:a", "aac", "-b:a", "320k",
         "-map", "0:v", "-map", "1:a",
-        "-shortest", str(output_path),
-    ], capture_output=True)
+    ]
+    if audio_seconds > 0:
+        overlay_cmd.extend(["-t", f"{audio_seconds:.3f}"])
+    overlay_cmd.append(str(output_path))
+    sp.run(overlay_cmd, capture_output=True)
 
     temp.unlink(missing_ok=True)
     concat_file.unlink(missing_ok=True)
