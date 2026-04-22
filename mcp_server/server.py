@@ -1780,36 +1780,30 @@ def comfy_mv_stitch(
         output_filename = f"{safe_title}_Music_Video.mp4"
     output_path = project_dir / output_filename
 
-    # Build concat file — walk scenes in order, expanding into shots where present.
-    # Intentionally omit the "duration" hint: ffmpeg's concat demuxer pads clips
-    # when that hint exceeds the actual file length, which inflated the output
-    # well past the song. Let the real clip duration speak for itself; the final
-    # ffmpeg pass clamps to the song length so any drift doesn't matter.
-    concat_file = project_dir / "concat.txt"
-    lines = []
-    valid = 0
+    # Collect the clips-in-order AND their intended durations so we can
+    # pre-normalize each one. The concat demuxer on its own silently holds
+    # the final frame of each input for ~1s when codecs/framerates mismatch
+    # across clips (a2v outputs at 25fps, wan22-i2v at 16fps), which
+    # accumulates into minutes of drift — the later scenes get pushed past
+    # the song-length clamp and vanish. Normalizing each clip first
+    # (explicit -t trim + consistent 25fps + yuv420p) eliminates the drift.
+    targets = []  # list of (video_path, duration_seconds)
     for scene in scenes:
         scene_shots = scene.get("shots") or []
         if scene_shots:
             for shot in scene_shots:
                 vp = shot.get("video_path", "")
                 if vp and Path(vp).exists():
-                    escaped = vp.replace("'", "'\\''")
-                    lines.append(f"file '{escaped}'")
-                    valid += 1
+                    targets.append((vp, float(shot.get("duration", 0))))
         else:
             vp = scene.get("video_path", "")
             if vp and Path(vp).exists():
-                escaped = vp.replace("'", "'\\''")
-                lines.append(f"file '{escaped}'")
-                valid += 1
+                targets.append((vp, float(scene["end"]) - float(scene["start"])))
 
-    if not lines:
+    if not targets:
         return json.dumps({"error": "No valid clips to stitch"})
-    concat_file.write_text("\n".join(lines))
 
-    # Probe the song so we can clamp final output to it — avoids silent trailing
-    # video and avoids losing frames when the stitched clips happen to be longer.
+    # Probe the song so we can clamp final output to it.
     audio_duration_probe = sp.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=nw=1:nk=1", audio_path],
@@ -1820,30 +1814,88 @@ def comfy_mv_stitch(
     except ValueError:
         audio_seconds = 0.0
 
-    # Concat video (re-encode because clips may differ in codec/colorspace)
+    # Normalize each clip: trim to target duration, unify resolution, fps, pixel
+    # format, and codec. Writes to a scratch dir inside the project.
+    norm_dir = project_dir / "_norm"
+    norm_dir.mkdir(parents=True, exist_ok=True)
+    # Clear stale normalized files so we don't leak across regen cycles.
+    for existing in norm_dir.glob("*.mp4"):
+        existing.unlink()
+    norm_clips: list[Path] = []
+    vf = (
+        f"scale={vid_w}:{vid_h}:force_original_aspect_ratio=decrease,"
+        f"pad={vid_w}:{vid_h}:(ow-iw)/2:(oh-ih)/2,fps=25"
+    )
+    for i, (vp, target_dur) in enumerate(targets):
+        out = norm_dir / f"{i:03d}.mp4"
+        sp.run([
+            "ffmpeg", "-y", "-i", vp,
+            "-t", f"{target_dur:.3f}",
+            "-vf", vf,
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+            "-pix_fmt", "yuv420p",
+            "-an", str(out),
+        ], capture_output=True)
+        if out.exists():
+            norm_clips.append(out)
+
+    if not norm_clips:
+        return json.dumps({"error": "Normalization produced no clips"})
+
+    # Concat the normalized clips — now all identical in codec/fps, stream copy
+    # is safe and length is exactly the sum of inputs (no hidden padding).
+    concat_file = project_dir / "concat.txt"
+    concat_file.write_text("\n".join(f"file '{c.name}'" for c in norm_clips))
     temp = project_dir / "temp_video.mp4"
     sp.run([
         "ffmpeg", "-y",
-        "-f", "concat", "-safe", "0", "-i", str(concat_file),
-        "-vf", f"scale={vid_w}:{vid_h}:force_original_aspect_ratio=decrease,pad={vid_w}:{vid_h}:(ow-iw)/2:(oh-ih)/2",
-        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-        "-an", str(temp),
-    ], capture_output=True)
+        "-f", "concat", "-safe", "0", "-i", str(concat_file.name),
+        "-c", "copy", str(temp.resolve()),
+    ], capture_output=True, cwd=str(norm_dir))
+    concat_file.unlink(missing_ok=True)
 
-    # Overlay original audio — explicit -t clamps to song length.
-    overlay_cmd = [
-        "ffmpeg", "-y",
-        "-i", str(temp), "-i", audio_path,
-        "-c:v", "copy", "-c:a", "aac", "-b:a", "320k",
-        "-map", "0:v", "-map", "1:a",
-    ]
+    # Audio overlay. If the concatenated video is shorter than the song, freeze
+    # the final frame for the remaining duration so the outro doesn't cut off
+    # mid-word. -t clamps to the song length.
+    temp_dur_probe = sp.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=nw=1:nk=1", str(temp)],
+        capture_output=True, text=True,
+    )
+    try:
+        temp_seconds = float(temp_dur_probe.stdout.strip())
+    except ValueError:
+        temp_seconds = 0.0
+    pad_needed = max(0.0, audio_seconds - temp_seconds) if audio_seconds > 0 else 0.0
+
+    overlay_cmd = ["ffmpeg", "-y", "-i", str(temp), "-i", audio_path]
+    if pad_needed > 0:
+        overlay_cmd.extend([
+            "-filter_complex", f"[0:v]tpad=stop_mode=clone:stop_duration={pad_needed + 0.5:.3f}[v]",
+            "-map", "[v]", "-map", "1:a",
+            "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+            "-pix_fmt", "yuv420p",
+        ])
+    else:
+        overlay_cmd.extend([
+            "-c:v", "copy",
+            "-map", "0:v", "-map", "1:a",
+        ])
+    overlay_cmd.extend(["-c:a", "aac", "-b:a", "320k"])
     if audio_seconds > 0:
         overlay_cmd.extend(["-t", f"{audio_seconds:.3f}"])
     overlay_cmd.append(str(output_path))
     sp.run(overlay_cmd, capture_output=True)
 
+    # Cleanup scratch
     temp.unlink(missing_ok=True)
-    concat_file.unlink(missing_ok=True)
+    for c in norm_clips:
+        c.unlink(missing_ok=True)
+    try:
+        norm_dir.rmdir()
+    except OSError:
+        pass
+    valid = len(norm_clips)
 
     if output_path.exists():
         size_mb = output_path.stat().st_size / (1024 * 1024)
