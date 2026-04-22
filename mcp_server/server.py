@@ -1910,6 +1910,60 @@ def comfy_mv_stitch(
 
 
 @mcp.tool()
+@_handle_errors
+def comfy_mv_production_doc(
+    project_name: str,
+    output_filename: str | None = None,
+) -> str:
+    """Generate a production overview PDF for a music video project.
+
+    The PDF adapts to the current pipeline stage — call it any time to
+    capture a snapshot of what's been decided so far:
+
+      - After comfy_mv_plan → cover, song/lyrics, scene structure, pipeline ref
+      - After comfy_mv_set_brief → adds the creative brief section
+      - After element generation → adds world elements with reference thumbnails
+      - After comfy_mv_set_shots → adds the shot list (prompts, motion prompts,
+        durations, element refs); start-frame thumbnails appear once images
+        are generated
+      - After comfy_mv_stitch → adds production notes + final video stats
+
+    Useful as a collaboration artifact — share the PDF at plan stage to
+    review the scene cut plan, at brief stage to align on creative
+    direction, at shot stage to sign off on coverage, and at final stage
+    as the production bible.
+
+    Args:
+        project_name: Project directory name.
+        output_filename: Optional output filename. Defaults to
+            '{safe_title}_Production_Overview.pdf' in the project dir.
+    """
+    from mcp_server import production_doc
+    try:
+        output_path = production_doc.build(project_name, output_filename,
+                                           projects_dir=PROJECTS_DIR)
+    except FileNotFoundError as e:
+        return json.dumps({"error": str(e)})
+
+    size_mb = output_path.stat().st_size / (1024 * 1024)
+    # Probe page count (lazy import — pypdf is only for status reporting)
+    pages = None
+    try:
+        from pypdf import PdfReader
+        pages = len(PdfReader(str(output_path)).pages)
+    except Exception:
+        pass
+    out = {
+        "status": "generated",
+        "output": str(output_path),
+        "size_mb": round(size_mb, 2),
+    }
+    if pages is not None:
+        out["pages"] = pages
+    return json.dumps(out, indent=2)
+
+
+@mcp.tool()
 def comfy_mv_status(project_name: str) -> str:
     """Check music video project status — what's done, pending, and failed.
 

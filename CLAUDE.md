@@ -66,6 +66,19 @@ approximately the scene duration. The pipeline auto-skips the scene-level clip w
 `comfy_mv_stitch` walks scenes in order and expands shots in order within each scene, then overlays
 the full original audio track so lipsync timing lines up with the song.
 
+### Production overview PDF (`comfy_mv_production_doc`)
+Generates a self-contained PDF of everything decided so far — cover, creative brief, world elements
+with reference thumbnails, scene structure with timeline, full shot list with start-frame
+thumbnails + prompts + motion prompts, technical pipeline reference, production notes, and file
+inventory. Call it at any pipeline stage (sections without data are skipped):
+- After plan → scene structure + song + lyrics
+- After brief → + creative brief
+- After element gen → + world elements with refs
+- After shots set → + shot list (thumbnails appear once images are generated)
+- After stitch → + final video stats + production notes
+
+Useful as a collaboration artifact to share with others mid-production.
+
 ## Development
 - Python managed with `uv` (pyproject.toml)
 - MCP server: `uv run python -m mcp_server.server`

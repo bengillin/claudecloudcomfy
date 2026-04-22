@@ -122,6 +122,7 @@ Works bidirectionally: Claude Code CLI and the web UI (`uv run python -m mcp_ser
 | `comfy_mv_generate` | Generate images, split audio, create video clips (handles scenes + shots) |
 | `comfy_mv_stitch` | Concatenate clips + overlay original audio |
 | `comfy_mv_status` | Check project progress and find failures |
+| `comfy_mv_production_doc` | Generate a production overview PDF — adapts to current pipeline stage |
 
 ### MCP resources & prompts
 
@@ -269,13 +270,14 @@ Export any workflow from ComfyUI Cloud as API-format JSON, then:
 | File/Dir | Description |
 |----------|-------------|
 | `comfy.sh` | CLI — every API endpoint + gen, animate, batch, presets, monitoring |
-| `mcp_server/server.py` | FastMCP server — 30 tools, 2 resources, 2 prompts |
+| `mcp_server/server.py` | FastMCP server — 31 tools, 2 resources, 2 prompts |
+| `mcp_server/production_doc.py` | Stage-aware PDF generator for music video projects |
 | `mcp_server/web.py` | FastAPI web server — wraps MCP tools as REST endpoints |
 | `mcp_server/static/index.html` | Web UI — Studio + Music Video modes, zero build step |
 | `mcp_server/music_video.py` | Music video pipeline — transcription, scene planning, stitching |
 | `mcp_server/config.py` | Path resolution + .env loading |
 | `.mcp.json` | Claude Code auto-connection config |
-| `tests/test_server.py` | 32 tests — presets, tools, errors, projects, shots (no API calls) |
+| `tests/test_server.py` | 37 tests — presets, tools, errors, projects, shots, production doc (no API calls) |
 | `.github/workflows/` | CI — runs tests on push/PR via GitHub Actions |
 | `pyproject.toml` | Python project config (uv, FastAPI, whisper) |
 | `presets/` | 8 preset configs + workflow JSONs (all verified) |

@@ -107,7 +107,7 @@ def test_run_comfy_failure():
 
 def test_mcp_has_tools():
     tools = mcp._tool_manager._tools
-    assert len(tools) == 30
+    assert len(tools) == 31
 
 
 def test_mcp_expected_tools_registered():
@@ -143,6 +143,7 @@ def test_mcp_expected_tools_registered():
         "comfy_mv_generate",
         "comfy_mv_stitch",
         "comfy_mv_status",
+        "comfy_mv_production_doc",
     }
     assert expected == tools
 
@@ -352,6 +353,98 @@ def test_mv_set_shots_persists_and_clears(tmp_path):
         comfy_mv_set_shots("s", 0, [])
         data = json.loads((proj / "storyboard.json").read_text())
         assert data["scenes"][0]["shots"] == []
+
+
+# ── Production doc PDF ──────────────────────────────────────────────
+
+
+def _seed_minimal_storyboard(proj: Path, with_brief=False, with_elements=False, with_shots=False):
+    """Create a storyboard at a given pipeline stage for doc-gen tests."""
+    sb = {
+        "title": "Test Track",
+        "audio_path": "/tmp/nonexistent.mp3",
+        "duration": 60.0,
+        "width": 1280,
+        "height": 720,
+        "brief": {},
+        "elements": [],
+        "scenes": [
+            {"id": 0, "start": 0, "end": 30, "text": "verse 1 lyrics", "segment_type": "verse",
+             "element_refs": [], "prompt": "", "motion_prompt": "", "seed": 0, "shots": []},
+            {"id": 1, "start": 30, "end": 60, "text": "chorus lyrics", "segment_type": "chorus",
+             "element_refs": [], "prompt": "", "motion_prompt": "", "seed": 1, "shots": []},
+        ],
+    }
+    if with_brief:
+        sb["brief"] = {
+            "narrative": "A test narrative.",
+            "mood": "test mood",
+            "visual_style": "test style",
+            "color_palette": "test palette",
+            "camera_style": "test camera",
+            "global_style": "no text in images",
+            "notes": "some notes",
+        }
+    if with_elements:
+        sb["elements"] = [
+            {"id": "hero", "category": "who", "name": "Hero",
+             "description": "The main character.",
+             "reference_images": [], "source_images": [], "seed": 42},
+        ]
+    if with_shots:
+        sb["scenes"][0]["shots"] = [
+            {"id": "a", "type": "lipsync", "duration": 15, "prompt": "wide shot",
+             "motion_prompt": "slow pan", "element_refs": [], "seed": 100,
+             "image_path": "", "audio_path": "", "video_path": ""},
+            {"id": "b", "type": "broll", "duration": 15, "prompt": "insert",
+             "motion_prompt": "", "element_refs": [], "seed": 101,
+             "image_path": "", "audio_path": "", "video_path": ""},
+        ]
+    proj.mkdir(exist_ok=True, parents=True)
+    (proj / "storyboard.json").write_text(json.dumps(sb))
+
+
+def test_production_doc_plan_only(tmp_path):
+    from mcp_server.production_doc import build
+    proj = tmp_path / "plan-only"
+    _seed_minimal_storyboard(proj)
+    out = build("plan-only", projects_dir=tmp_path)
+    assert out.exists()
+    assert out.stat().st_size > 2000  # non-trivial PDF
+
+
+def test_production_doc_with_brief(tmp_path):
+    from mcp_server.production_doc import build
+    proj = tmp_path / "brief"
+    _seed_minimal_storyboard(proj, with_brief=True)
+    out = build("brief", projects_dir=tmp_path)
+    assert out.exists()
+
+
+def test_production_doc_with_shots(tmp_path):
+    from mcp_server.production_doc import build
+    proj = tmp_path / "shots"
+    _seed_minimal_storyboard(proj, with_brief=True, with_elements=True, with_shots=True)
+    out = build("shots", projects_dir=tmp_path)
+    assert out.exists()
+
+
+def test_production_doc_missing_project(tmp_path):
+    from mcp_server.production_doc import build
+    import pytest
+    with pytest.raises(FileNotFoundError):
+        build("does-not-exist", projects_dir=tmp_path)
+
+
+def test_mv_production_doc_tool(tmp_path):
+    from mcp_server.server import comfy_mv_production_doc
+    proj = tmp_path / "toolproj"
+    _seed_minimal_storyboard(proj, with_brief=True)
+    with patch("mcp_server.server.PROJECTS_DIR", tmp_path):
+        r = json.loads(comfy_mv_production_doc("toolproj"))
+    assert r["status"] == "generated"
+    assert Path(r["output"]).exists()
+    assert r["size_mb"] > 0
 
 
 # ── Error classification ─────────────────────────────────────────────
