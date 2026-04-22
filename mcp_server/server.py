@@ -1949,44 +1949,49 @@ def _compose_image(
 
     Mirrors the scene-level image generation logic so shots and scenes share
     one composition path. Returns True on success (writes to output_path).
+    Swallows ComfyError so a single transient cloud failure doesn't abort
+    an entire batch — the caller logs the failure and moves on.
     """
     import shutil
     fake_scene = {"element_refs": element_refs}
     ref_paths = _collect_scene_refs(fake_scene, elements_by_id, max_refs=3)
 
-    if not ref_paths:
-        output = _run_comfy(
-            "gen", "--preset=z-turbo",
-            "--prompt", prompt,
-            f"--seed={seed}",
-            "--set", f"57:13.width={vid_w}",
-            "--set", f"57:13.height={vid_h}",
-        )
-    else:
-        uploaded = []
-        for p in ref_paths:
-            remote = _upload_file(p)
-            if not remote:
-                return False
-            uploaded.append(remote)
-        n = len(uploaded)
-        if n == 1:
-            wf = "presets/qwen-edit_workflow.json"
-            image_sets = [("78", uploaded[0])]
-        elif n == 2:
-            wf = "presets/qwen-edit-2ref_workflow.json"
-            image_sets = [("78", uploaded[0]), ("79", uploaded[1])]
+    try:
+        if not ref_paths:
+            output = _run_comfy(
+                "gen", "--preset=z-turbo",
+                "--prompt", prompt,
+                f"--seed={seed}",
+                "--set", f"57:13.width={vid_w}",
+                "--set", f"57:13.height={vid_h}",
+            )
         else:
-            wf = "presets/qwen-edit-3ref_workflow.json"
-            image_sets = [("78", uploaded[0]), ("79", uploaded[1]), ("80", uploaded[2])]
-        cmd = [
-            "go", wf,
-            "--set", f"435.value={prompt}",
-            "--set", f"433:3.seed={seed}",
-        ]
-        for node_id, remote_name in image_sets:
-            cmd.extend(["--set", f"{node_id}.image={remote_name}"])
-        output = _run_comfy(*cmd)
+            uploaded = []
+            for p in ref_paths:
+                remote = _upload_file(p)
+                if not remote:
+                    return False
+                uploaded.append(remote)
+            n = len(uploaded)
+            if n == 1:
+                wf = "presets/qwen-edit_workflow.json"
+                image_sets = [("78", uploaded[0])]
+            elif n == 2:
+                wf = "presets/qwen-edit-2ref_workflow.json"
+                image_sets = [("78", uploaded[0]), ("79", uploaded[1])]
+            else:
+                wf = "presets/qwen-edit-3ref_workflow.json"
+                image_sets = [("78", uploaded[0]), ("79", uploaded[1]), ("80", uploaded[2])]
+            cmd = [
+                "go", wf,
+                "--set", f"435.value={prompt}",
+                "--set", f"433:3.seed={seed}",
+            ]
+            for node_id, remote_name in image_sets:
+                cmd.extend(["--set", f"{node_id}.image={remote_name}"])
+            output = _run_comfy(*cmd)
+    except ComfyError:
+        return False
 
     saved = _find_saved_file(output)
     if not saved:
@@ -2014,21 +2019,30 @@ def _generate_a2v_clip(
     seed: int,
     output_path,
 ) -> bool:
-    """Run ltx23-a2v — image + audio slice → lip-synced clip."""
+    """Run ltx23-a2v — image + audio slice → lip-synced clip.
+
+    Returns False on any failure (upload, cloud worker death, missing output).
+    The caller is responsible for logging the shot id and letting the batch
+    continue. This makes big generations resilient to Comfy Cloud's transient
+    'RIP to the server your workflow was running on' errors.
+    """
     import shutil
-    img_remote = _upload_file(image_path)
-    audio_remote = _upload_file(audio_path)
-    if not img_remote or not audio_remote:
+    try:
+        img_remote = _upload_file(image_path)
+        audio_remote = _upload_file(audio_path)
+        if not img_remote or not audio_remote:
+            return False
+        output = _run_comfy(
+            "go", "presets/ltx23-a2v_workflow.json",
+            "--set", f"269.image={img_remote}",
+            "--set", f"276.audio={audio_remote}",
+            "--set", f"340:319.value={motion_prompt or 'cinematic motion'}",
+            "--set", f"340:331.value={duration}",
+            "--set", f"340:285.noise_seed={seed}",
+            timeout=600,
+        )
+    except ComfyError:
         return False
-    output = _run_comfy(
-        "go", "presets/ltx23-a2v_workflow.json",
-        "--set", f"269.image={img_remote}",
-        "--set", f"276.audio={audio_remote}",
-        "--set", f"340:319.value={motion_prompt or 'cinematic motion'}",
-        "--set", f"340:331.value={duration}",
-        "--set", f"340:285.noise_seed={seed}",
-        timeout=600,
-    )
     saved = _find_saved_file(output)
     if not saved:
         return False
@@ -2045,23 +2059,30 @@ def _generate_i2v_clip(
     height: int,
     output_path,
 ) -> bool:
-    """Run wan22-i2v — image + motion prompt → silent video clip (for broll cutaways)."""
+    """Run wan22-i2v — image + motion prompt → silent video clip (for broll cutaways).
+
+    Returns False on any failure (upload, cloud worker death, missing output)
+    so batch generation can log the single miss and continue.
+    """
     import shutil
-    img_remote = _upload_file(image_path)
-    if not img_remote:
+    try:
+        img_remote = _upload_file(image_path)
+        if not img_remote:
+            return False
+        # wan22-i2v runs at 16fps internally; length is frames.
+        length = max(16, int(round(duration * 16)))
+        output = _run_comfy(
+            "go", "presets/wan22-i2v_workflow.json",
+            "--set", f"97.image={img_remote}",
+            "--set", f"129:93.text={motion_prompt or 'subtle camera movement'}",
+            "--set", f"129:86.noise_seed={seed}",
+            "--set", f"129:98.length={length}",
+            "--set", f"129:98.width={width}",
+            "--set", f"129:98.height={height}",
+            timeout=600,
+        )
+    except ComfyError:
         return False
-    # wan22-i2v runs at 16fps internally; length is frames.
-    length = max(16, int(round(duration * 16)))
-    output = _run_comfy(
-        "go", "presets/wan22-i2v_workflow.json",
-        "--set", f"97.image={img_remote}",
-        "--set", f"129:93.text={motion_prompt or 'subtle camera movement'}",
-        "--set", f"129:86.noise_seed={seed}",
-        "--set", f"129:98.length={length}",
-        "--set", f"129:98.width={width}",
-        "--set", f"129:98.height={height}",
-        timeout=600,
-    )
     saved = _find_saved_file(output)
     if not saved:
         return False
