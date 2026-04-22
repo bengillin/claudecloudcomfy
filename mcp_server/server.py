@@ -1526,23 +1526,29 @@ def comfy_mv_generate(
     # Filter to requested scenes
     if scenes is not None:
         target_scenes = [s for s in all_scenes if s["id"] in scenes]
-        # Clear existing files so they get regenerated
+        # Only clear files for the step being requested — regenerating clips
+        # must not blow away the images / audio they depend on.
         ext_by_key = {"image_path": "png", "audio_path": "wav", "video_path": "mp4"}
         subdir_by_key = {"image_path": "scenes", "audio_path": "segments", "video_path": "clips"}
+        step_to_key = {"images": "image_path", "audio": "audio_path", "clips": "video_path"}
+        if step is None:
+            keys_to_clear = list(ext_by_key.keys())
+        else:
+            key = step_to_key.get(step)
+            keys_to_clear = [key] if key else []
         for s in target_scenes:
             s_shots = s.get("shots") or []
             if s_shots:
-                # Clear per-shot files
                 for shot in s_shots:
                     stem = _shot_file_stem(s["id"], shot["id"])
-                    for key, ext in ext_by_key.items():
-                        path = project_dir / subdir_by_key[key] / f"{stem}.{ext}"
+                    for key in keys_to_clear:
+                        path = project_dir / subdir_by_key[key] / f"{stem}.{ext_by_key[key]}"
                         if path.exists():
                             path.unlink()
                         shot[key] = ""
             else:
-                for key, ext in ext_by_key.items():
-                    path = project_dir / subdir_by_key[key] / f"scene_{s['id']:03d}.{ext}"
+                for key in keys_to_clear:
+                    path = project_dir / subdir_by_key[key] / f"scene_{s['id']:03d}.{ext_by_key[key]}"
                     if path.exists():
                         path.unlink()
                     s[key] = ""
